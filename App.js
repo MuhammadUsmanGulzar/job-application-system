@@ -23,6 +23,7 @@ export default function App() {
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoginMode, setIsLoginMode] = useState(true);
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState(null);
@@ -336,6 +337,19 @@ export default function App() {
             </View>
           ) : null}
 
+          {!isLoginMode && (
+            <>
+              <Text style={styles.label}>Full Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. John Doe"
+                value={fullName}
+                onChangeText={setFullName}
+                autoCapitalize="words"
+              />
+            </>
+          )}
+
           <Text style={styles.label}>Email Address</Text>
           <TextInput
             style={styles.input}
@@ -362,8 +376,18 @@ export default function App() {
               setAuthError('');
               setAuthMessage('');
 
+              if (!isLoginMode && !fullName.trim()) {
+                setAuthError('Please enter your full name.');
+                return;
+              }
+
               if (!email.trim() || !password.trim()) {
                 setAuthError('Please enter both email and password.');
+                return;
+              }
+
+              if (!isLoginMode && password.length < 6) {
+                setAuthError('Password must be at least 6 characters.');
                 return;
               }
 
@@ -378,6 +402,25 @@ export default function App() {
                   if (error) {
                     setAuthError(error.message);
                   } else if (data?.session) {
+                    // Sync users & profiles records
+                    try {
+                      const u = data.session.user;
+                      const userDisplayName = u.user_metadata?.full_name || email.trim().split('@')[0];
+                      await supabase.from('users').upsert({
+                        id: u.id,
+                        email: u.email,
+                        full_name: userDisplayName,
+                        updated_at: new Date().toISOString()
+                      }, { onConflict: 'id' });
+                      await supabase.from('profiles').upsert({
+                        id: u.id,
+                        email: u.email,
+                        full_name: userDisplayName,
+                        updated_at: new Date().toISOString()
+                      }, { onConflict: 'id' });
+                    } catch (syncErr) {
+                      console.warn('Mobile login sync notice:', syncErr);
+                    }
                     setSession(data.session);
                     setIsAuthenticated(true);
                   }
@@ -385,23 +428,66 @@ export default function App() {
                   const { data, error } = await supabase.auth.signUp({
                     email: email.trim(),
                     password: password.trim(),
+                    options: {
+                      data: {
+                        full_name: fullName.trim(),
+                      },
+                    },
                   });
+
                   if (error) {
                     setAuthError(error.message);
-                  } else if (data?.session) {
-                    setAuthMessage('Account created and signed in!');
-                    setSession(data.session);
-                    setIsAuthenticated(true);
-                  } else if (data?.user) {
-                    const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
-                      email: email.trim(),
-                      password: password.trim(),
-                    });
-                    if (!loginErr && loginData?.session) {
-                      setSession(loginData.session);
+                  } else {
+                    const targetUser = data?.user || data?.session?.user;
+                    if (targetUser) {
+                      const displayName = fullName.trim() || email.trim().split('@')[0];
+                      try {
+                        await supabase.from('users').upsert({
+                          id: targetUser.id,
+                          email: email.trim(),
+                          full_name: displayName,
+                          updated_at: new Date().toISOString()
+                        }, { onConflict: 'id' });
+                      } catch (uErr) {
+                        console.warn('Users table upsert notice:', uErr);
+                      }
+
+                      try {
+                        await supabase.from('profiles').upsert({
+                          id: targetUser.id,
+                          email: email.trim(),
+                          full_name: displayName,
+                          updated_at: new Date().toISOString()
+                        }, { onConflict: 'id' });
+                      } catch (pErr) {
+                        console.warn('Profiles table upsert notice:', pErr);
+                      }
+
+                      try {
+                        await supabase.from('user_settings').upsert({
+                          user_id: targetUser.id
+                        }, { onConflict: 'user_id' });
+                      } catch (sErr) {
+                        console.warn('User_settings table upsert notice:', sErr);
+                      }
+                    }
+
+                    if (data?.session) {
+                      setAuthMessage('Account created and signed in!');
+                      setSession(data.session);
                       setIsAuthenticated(true);
-                    } else {
-                      setAuthMessage('Account created! Sign in to continue.');
+                    } else if (data?.user) {
+                      const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
+                        email: email.trim(),
+                        password: password.trim(),
+                      });
+                      if (!loginErr && loginData?.session) {
+                        setSession(loginData.session);
+                        setIsAuthenticated(true);
+                      } else {
+                        setAuthMessage('Account created! Sign in with your credentials.');
+                        setIsLoginMode(true);
+                      }
                     }
                   }
                 }
@@ -415,7 +501,7 @@ export default function App() {
             {authLoading ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
-              <Text style={styles.primaryBtnText}>{isLoginMode ? 'Sign In' : 'Sign Up'}</Text>
+              <Text style={styles.primaryBtnText}>{isLoginMode ? 'Sign In' : 'Create Account'}</Text>
             )}
           </TouchableOpacity>
 
@@ -423,6 +509,7 @@ export default function App() {
             style={{ marginTop: 20, alignItems: 'center' }}
             onPress={() => {
               setIsLoginMode(!isLoginMode);
+              setFullName('');
               setAuthError('');
               setAuthMessage('');
             }}
@@ -445,7 +532,11 @@ export default function App() {
       <View style={styles.topBar}>
         <View>
           <Text style={styles.appName}>JobApply<Text style={{ color: '#2563eb' }}>Pro</Text></Text>
-          <Text style={styles.userEmailLabel}>{session?.user?.email || 'User'}</Text>
+          <Text style={styles.userEmailLabel}>
+            {session?.user?.user_metadata?.full_name 
+              ? `${session.user.user_metadata.full_name} (${session.user.email})`
+              : (session?.user?.email || 'User')}
+          </Text>
         </View>
         <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.signOutBtn}>
           <Text style={styles.signOutBtnText}>Log Out</Text>
