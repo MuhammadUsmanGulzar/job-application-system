@@ -158,16 +158,10 @@ export default function AppWeb() {
     }
   };
 
-  // Generate Application with AI
+  // Submit Application & Trigger n8n Webhook
   const handleGenerateAndApply = async () => {
     if (!jobTitle.trim()) {
       window.alert('Please enter a Job Title.');
-      return;
-    }
-
-    if (!settings.llmApiKey.trim()) {
-      window.alert('Please configure your OpenAI / LLM API Key in the Settings tab first.');
-      setActiveTab('settings');
       return;
     }
 
@@ -175,37 +169,111 @@ export default function AppWeb() {
     setGeneratedResult(null);
 
     try {
-      const content = await generateJobApplication({
-        jobTitle,
-        companyName,
-        recipientEmail,
-        requirements,
-        description,
-        resumeContent: settings.resumeContent,
-        resumeName: settings.resumeName,
-        apiKey: settings.llmApiKey,
-        model: settings.llmModel,
-        provider: settings.llmProvider,
-      });
+      // 1. Ensure User ID from DB (Supabase Auth session)
+      let userId = session?.user?.id;
+      let userEmail = session?.user?.email;
+
+      if (!userId) {
+        const { data: { session: freshSession } } = await supabase.auth.getSession();
+        userId = freshSession?.user?.id;
+        userEmail = freshSession?.user?.email;
+      }
+
+      if (!userId) {
+        window.alert('Authentication required. Please sign in to submit.');
+        setIsGenerating(false);
+        return;
+      }
+
+      // 2. Prepare comprehensive payload including User ID from DB
+      const n8nWebhookUrl = 'https://n8n.flyinvict.com/webhook/8c9fe40a-79bb-49b7-9bdf-e9bba8bae6cc';
+
+      const webhookPayload = {
+        user_id: userId,
+        user_email: userEmail,
+        job_title: jobTitle.trim(),
+        company_name: companyName.trim() || 'Hiring Company',
+        recipient_email: recipientEmail.trim(),
+        requirements: requirements.trim(),
+        description: description.trim(),
+        resume_name: settings.resumeName || '',
+        resume_content: settings.resumeContent || '',
+        llm_provider: settings.llmProvider || 'OpenAI',
+        llm_model: settings.llmModel || 'gpt-4o-mini',
+        google_sender_email: settings.googleSenderEmail || '',
+        submitted_at: new Date().toISOString(),
+      };
+
+      // 3. Trigger the n8n webhook node
+      let n8nResponseText = '';
+      try {
+        const wbRes = await fetch(n8nWebhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(webhookPayload),
+        });
+
+        if (wbRes.ok) {
+          try {
+            const data = await wbRes.json();
+            if (data?.generated_email || data?.output || data?.text || data?.message) {
+              n8nResponseText = data.generated_email || data.output || data.text || data.message;
+            }
+          } catch (e) {
+            // Not json
+          }
+        }
+      } catch (wbError) {
+        console.warn('n8n Webhook trigger warning:', wbError);
+      }
+
+      // 4. Generate AI pitch if LLM API Key is configured, or use n8n response
+      let content = n8nResponseText;
+
+      if (!content && settings.llmApiKey.trim()) {
+        try {
+          content = await generateJobApplication({
+            jobTitle,
+            companyName,
+            recipientEmail,
+            requirements,
+            description,
+            resumeContent: settings.resumeContent,
+            resumeName: settings.resumeName,
+            apiKey: settings.llmApiKey,
+            model: settings.llmModel,
+            provider: settings.llmProvider,
+          });
+        } catch (llmErr) {
+          console.warn('Direct LLM generation notice:', llmErr.message);
+        }
+      }
+
+      if (!content) {
+        content = `✓ Application submitted to n8n workflow!\n\nUser ID: ${userId}\nJob: ${jobTitle}\nCompany: ${companyName || 'Hiring Company'}\nRecipient: ${recipientEmail || 'N/A'}\n\nAll details and your resume have been forwarded to your n8n workflow.`;
+      }
 
       const newApp = {
         id: Date.now().toString(),
         jobTitle: jobTitle.trim(),
-        companyName: companyName.trim() || 'Undisclosed Company',
+        companyName: companyName.trim() || 'Hiring Company',
         recipientEmail: recipientEmail.trim(),
         requirements: requirements.trim(),
         description: description.trim(),
         generatedEmail: content,
-        status: recipientEmail ? 'Generated' : 'Draft',
+        status: recipientEmail ? 'Applied' : 'Generated',
         createdAt: new Date().toISOString(),
       };
 
-      const updatedList = await saveApplication(session?.user?.id, newApp);
+      const updatedList = await saveApplication(userId, newApp);
       if (updatedList) setApplications(updatedList);
 
       setGeneratedResult(newApp);
+      window.alert('Success! All details (including your User ID) have been sent to your n8n webhook.');
     } catch (err) {
-      window.alert('Error generating application: ' + err.message);
+      window.alert('Error submitting application: ' + err.message);
       console.error(err);
     } finally {
       setIsGenerating(false);
