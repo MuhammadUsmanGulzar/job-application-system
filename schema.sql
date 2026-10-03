@@ -1,6 +1,5 @@
 -- ==============================================================================
 -- JOB APPLICATION SYSTEM: COMPLETE DATABASE SCHEMA & STORAGE CONFIGURATION
--- Run this in your Supabase SQL Editor: https://supabase.com/dashboard/project/msyzzsoiuzwwsksfvddj/sql
 -- ==============================================================================
 
 -- 1. EXTENSIONS
@@ -10,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- 2. TABLES DEFINITIONS
 -- ==============================================================================
 
--- Table: PROFILES (User details linked directly to Supabase Auth)
+-- Table: PROFILES
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT NOT NULL,
@@ -21,7 +20,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Table: USER_SETTINGS (API keys, Google Console credentials, and preferences)
+-- Table: USER_SETTINGS
 CREATE TABLE IF NOT EXISTS public.user_settings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
@@ -37,12 +36,12 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Table: RESUMES (Stores metadata & file paths for uploaded resumes in Storage)
+-- Table: RESUMES
 CREATE TABLE IF NOT EXISTS public.resumes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     file_name TEXT NOT NULL,
-    file_path TEXT NOT NULL, -- e.g., 'user-id/resume.pdf'
+    file_path TEXT NOT NULL,
     file_size BIGINT,
     mime_type TEXT,
     parsed_text TEXT,
@@ -51,7 +50,7 @@ CREATE TABLE IF NOT EXISTS public.resumes (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Table: APPLICATIONS (Stores every job applied for and generated pitches)
+-- Table: APPLICATIONS
 CREATE TABLE IF NOT EXISTS public.applications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -61,7 +60,7 @@ CREATE TABLE IF NOT EXISTS public.applications (
     requirements TEXT,
     description TEXT,
     generated_email TEXT,
-    status TEXT NOT NULL DEFAULT 'Draft', -- 'Draft' | 'Generated' | 'Applied' | 'Interviewing' | 'Rejected' | 'Offer'
+    status TEXT NOT NULL DEFAULT 'Draft',
     resume_id UUID REFERENCES public.resumes(id) ON DELETE SET NULL,
     applied_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -69,13 +68,12 @@ CREATE TABLE IF NOT EXISTS public.applications (
 );
 
 -- ==============================================================================
--- 3. AUTOMATIC PROFILE & SETTINGS INITIALIZATION (TRIGGER)
+-- 3. TRIGGERS
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Create public profile
     INSERT INTO public.profiles (id, email, full_name)
     VALUES (
         NEW.id,
@@ -84,7 +82,6 @@ BEGIN
     )
     ON CONFLICT (id) DO NOTHING;
 
-    -- Create default user settings
     INSERT INTO public.user_settings (user_id)
     VALUES (NEW.id)
     ON CONFLICT (user_id) DO NOTHING;
@@ -93,13 +90,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Trigger firing on every new user signup
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users
 FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Auto update updated_at timestamp function
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -108,21 +103,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER update_profiles_timestamp
+DROP TRIGGER IF EXISTS update_profiles_timestamp ON public.profiles;
+CREATE TRIGGER update_profiles_timestamp
 BEFORE UPDATE ON public.profiles
 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE OR REPLACE TRIGGER update_user_settings_timestamp
+DROP TRIGGER IF EXISTS update_user_settings_timestamp ON public.user_settings;
+CREATE TRIGGER update_user_settings_timestamp
 BEFORE UPDATE ON public.user_settings
 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
-CREATE OR REPLACE TRIGGER update_applications_timestamp
+DROP TRIGGER IF EXISTS update_applications_timestamp ON public.applications;
+CREATE TRIGGER update_applications_timestamp
 BEFORE UPDATE ON public.applications
 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- ==============================================================================
 -- 4. ROW LEVEL SECURITY (RLS) POLICIES
--- Each user can strictly only see, insert, update, and delete their own data!
 -- ==============================================================================
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -131,75 +128,57 @@ ALTER TABLE public.resumes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;
 
 -- Profiles Policies
-CREATE POLICY "Users can view own profile" 
-ON public.profiles FOR SELECT 
-USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
 
-CREATE POLICY "Users can update own profile" 
-ON public.profiles FOR UPDATE 
-USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
 -- User Settings Policies
-CREATE POLICY "Users can view own settings" 
-ON public.user_settings FOR SELECT 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can view own settings" ON public.user_settings;
+CREATE POLICY "Users can view own settings" ON public.user_settings FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own settings" 
-ON public.user_settings FOR INSERT 
-WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own settings" ON public.user_settings;
+CREATE POLICY "Users can insert own settings" ON public.user_settings FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own settings" 
-ON public.user_settings FOR UPDATE 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own settings" ON public.user_settings;
+CREATE POLICY "Users can update own settings" ON public.user_settings FOR UPDATE USING (auth.uid() = user_id);
 
 -- Resumes Policies
-CREATE POLICY "Users can view own resumes" 
-ON public.resumes FOR SELECT 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can view own resumes" ON public.resumes;
+CREATE POLICY "Users can view own resumes" ON public.resumes FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own resumes" 
-ON public.resumes FOR INSERT 
-WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own resumes" ON public.resumes;
+CREATE POLICY "Users can insert own resumes" ON public.resumes FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own resumes" 
-ON public.resumes FOR UPDATE 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own resumes" ON public.resumes;
+CREATE POLICY "Users can update own resumes" ON public.resumes FOR UPDATE USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own resumes" 
-ON public.resumes FOR DELETE 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own resumes" ON public.resumes;
+CREATE POLICY "Users can delete own resumes" ON public.resumes FOR DELETE USING (auth.uid() = user_id);
 
 -- Applications Policies
-CREATE POLICY "Users can view own applications" 
-ON public.applications FOR SELECT 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can view own applications" ON public.applications;
+CREATE POLICY "Users can view own applications" ON public.applications FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own applications" 
-ON public.applications FOR INSERT 
-WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own applications" ON public.applications;
+CREATE POLICY "Users can insert own applications" ON public.applications FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own applications" 
-ON public.applications FOR UPDATE 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own applications" ON public.applications;
+CREATE POLICY "Users can update own applications" ON public.applications FOR UPDATE USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own applications" 
-ON public.applications FOR DELETE 
-USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own applications" ON public.applications;
+CREATE POLICY "Users can delete own applications" ON public.applications FOR DELETE USING (auth.uid() = user_id);
 
 -- ==============================================================================
 -- 5. STORAGE BUCKET CONFIGURATION (FOR RESUMES)
--- Creates the 'resumes' bucket and sets isolated per-user folder security.
--- Path pattern: resumes/{user_id}/{filename}
 -- ==============================================================================
 
--- 1. Insert bucket if not already created
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('resumes', 'resumes', false)
 ON CONFLICT (id) DO NOTHING;
 
--- 2. Storage RLS Policies: Ensures every user only accesses their own folder
-
--- Allow users to upload into their own folder: resumes/{user_id}/*
+DROP POLICY IF EXISTS "Users can upload their own resume" ON storage.objects;
 CREATE POLICY "Users can upload their own resume"
 ON storage.objects FOR INSERT
 TO authenticated
@@ -208,7 +187,7 @@ WITH CHECK (
     (storage.foldername(name))[1] = auth.uid()::text
 );
 
--- Allow users to view/download files in their own folder
+DROP POLICY IF EXISTS "Users can read their own resume" ON storage.objects;
 CREATE POLICY "Users can read their own resume"
 ON storage.objects FOR SELECT
 TO authenticated
@@ -217,7 +196,7 @@ USING (
     (storage.foldername(name))[1] = auth.uid()::text
 );
 
--- Allow users to update/replace files in their own folder
+DROP POLICY IF EXISTS "Users can update their own resume" ON storage.objects;
 CREATE POLICY "Users can update their own resume"
 ON storage.objects FOR UPDATE
 TO authenticated
@@ -226,7 +205,7 @@ USING (
     (storage.foldername(name))[1] = auth.uid()::text
 );
 
--- Allow users to delete files in their own folder
+DROP POLICY IF EXISTS "Users can delete their own resume" ON storage.objects;
 CREATE POLICY "Users can delete their own resume"
 ON storage.objects FOR DELETE
 TO authenticated
