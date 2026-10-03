@@ -140,16 +140,16 @@ export default function AppWeb() {
               try {
                 await uploadResumeFile(session.user.id, file, file.name);
                 await saveSettings(session.user.id, updated);
-                setSettingsFeedback(`Uploaded to cloud bucket: ${file.name}`);
+                setResumeFeedback(`Uploaded to cloud bucket: ${file.name}`);
               } catch (storageErr) {
                 console.log('Bucket upload note:', storageErr.message);
                 await saveSettings(session.user.id, updated);
-                setSettingsFeedback(`Saved resume: ${file.name}`);
+                setResumeFeedback(`Saved resume: ${file.name}`);
               }
             } else {
-              setSettingsFeedback(`Uploaded resume: ${file.name}`);
+              setResumeFeedback(`Uploaded resume: ${file.name}`);
             }
-            setTimeout(() => setSettingsFeedback(''), 3000);
+            setTimeout(() => setResumeFeedback(''), 3000);
           };
           reader.readAsText(file);
         }
@@ -743,12 +743,6 @@ export default function AppWeb() {
             <Text style={styles.cardDescription}>
               Manage your Resume, AI Provider (OpenAI / LLM API), and Google Console credentials.
             </Text>
-
-            {settingsFeedback ? (
-              <View style={styles.successBanner}>
-                <Text style={styles.successBannerText}>{settingsFeedback}</Text>
-              </View>
-            ) : null}
 
             {/* Section 1: Candidate Resume */}
             <View style={styles.webCard}>
