@@ -117,6 +117,18 @@ CREATE TABLE IF NOT EXISTS public.applications (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Table: APPLICATION_EMAILS (Stores AI-generated emails generated via n8n backend)
+CREATE TABLE IF NOT EXISTS public.application_emails (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    application_id UUID REFERENCES public.applications(id) ON DELETE CASCADE,
+    subject TEXT,
+    body TEXT,
+    status TEXT DEFAULT 'pending',
+    sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ==============================================================================
 -- 3. AUTOMATIC USER & PROFILE INSERTION TRIGGER (FIXED WITH SEARCH_PATH)
 -- ==============================================================================

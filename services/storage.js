@@ -356,3 +356,68 @@ export async function deleteApplication(userId, applicationId) {
 
   return updated;
 }
+
+// --------------------------------------------------------
+// FETCH GENERATED EMAIL FROM application_emails TABLE
+// --------------------------------------------------------
+
+export async function fetchLatestApplicationEmail(userId, submittedAfter) {
+  if (!userId) return null;
+
+  try {
+    // 1. Try public.application_emails
+    let query = supabase
+      .from('application_emails')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (submittedAfter) {
+      query = query.gte('created_at', submittedAfter);
+    }
+
+    let { data, error } = await query;
+
+    // Fallback to singular application_email if schema cache differs
+    if (error && error.code === 'PGRST205') {
+      let altQuery = supabase
+        .from('application_email')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (submittedAfter) {
+        altQuery = altQuery.gte('created_at', submittedAfter);
+      }
+      const altRes = await altQuery;
+      data = altRes.data;
+      error = altRes.error;
+    }
+
+    if (!error && data && data.length > 0) {
+      const row = data[0];
+      const body = row.body || row.generated_email || row.content || row.text || '';
+      const subject = row.subject || '';
+
+      if (body || subject) {
+        let fullEmail = body;
+        if (subject && !body.toLowerCase().startsWith('subject:')) {
+          fullEmail = `Subject: ${subject}\n\n${body}`;
+        }
+        return {
+          id: row.id,
+          subject,
+          body,
+          fullEmail,
+          createdAt: row.created_at,
+          raw: row,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching from application_emails table:', err);
+  }
+
+  return null;
+}

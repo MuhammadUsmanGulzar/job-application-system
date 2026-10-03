@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -19,7 +19,8 @@ import {
   uploadResumeFile,
   getProfile,
   saveProfile,
-  defaultProfile
+  defaultProfile,
+  fetchLatestApplicationEmail
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
@@ -75,6 +76,7 @@ export default function AppWeb() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
+  const pollIntervalRef = useRef(null);
 
   // Stopwatch timer for n8n AI email generation
   useEffect(() => {
@@ -90,6 +92,13 @@ export default function AppWeb() {
       if (interval) clearInterval(interval);
     };
   }, [isGenerating]);
+
+  // Clean up polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
   const formatTime = (totalSecs) => {
     const mins = Math.floor(totalSecs / 60);
@@ -212,93 +221,97 @@ export default function AppWeb() {
     }
   };
 
-  // Submit Application & Trigger n8n Webhook
+  // Submit Application, Start Timer/Loader, Trigger n8n & Poll application_emails table
   const handleGenerateAndApply = async () => {
     if (!jobTitle.trim()) {
       window.alert('Please enter a Job Title.');
       return;
     }
 
+    // 1. Ensure User ID from DB (Supabase Auth session)
+    let userId = session?.user?.id;
+    if (!userId) {
+      const { data: { session: freshSession } } = await supabase.auth.getSession();
+      userId = freshSession?.user?.id;
+    }
+
+    if (!userId) {
+      window.alert('Authentication required. Please sign in to submit.');
+      return;
+    }
+
+    // 2. Start timer & loader immediately
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
     setIsGenerating(true);
+    setGenerationSeconds(0);
     setGeneratedResult(null);
 
-    try {
-      // 1. Ensure User ID from DB (Supabase Auth session)
-      let userId = session?.user?.id;
-      let userEmail = session?.user?.email;
+    // Record submission time (buffered 5 seconds for server clock drift)
+    const submitTime = new Date(Date.now() - 5000).toISOString();
 
-      if (!userId) {
-        const { data: { session: freshSession } } = await supabase.auth.getSession();
-        userId = freshSession?.user?.id;
-        userEmail = freshSession?.user?.email;
-      }
+    // 3. Prepare payload with ONLY userID and form details
+    const n8nWebhookUrl = 'https://n8n.flyinvict.com/webhook/8c9fe40a-79bb-49b7-9bdf-e9bba8bae6cc';
 
-      if (!userId) {
-        window.alert('Authentication required. Please sign in to submit.');
-        setIsGenerating(false);
-        return;
-      }
+    const webhookPayload = {
+      userID: userId,
+      user_id: userId,
+      jobTitle: jobTitle.trim(),
+      job_title: jobTitle.trim(),
+      companyName: companyName.trim(),
+      company_name: companyName.trim(),
+      recipientEmail: recipientEmail.trim(),
+      recipient_email: recipientEmail.trim(),
+      requirements: requirements.trim(),
+      description: description.trim(),
+    };
 
-      // 2. Prepare payload with ONLY userID and form details
-      const n8nWebhookUrl = 'https://n8n.flyinvict.com/webhook/8c9fe40a-79bb-49b7-9bdf-e9bba8bae6cc';
+    let directWebhookContent = '';
 
-      const webhookPayload = {
-        userID: userId,
-        user_id: userId,
-        jobTitle: jobTitle.trim(),
-        job_title: jobTitle.trim(),
-        companyName: companyName.trim(),
-        company_name: companyName.trim(),
-        recipientEmail: recipientEmail.trim(),
-        recipient_email: recipientEmail.trim(),
-        requirements: requirements.trim(),
-        description: description.trim(),
-      };
-
-      // 3. Trigger the n8n webhook node & await generation
-      let content = '';
-      try {
-        const wbRes = await fetch(n8nWebhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(webhookPayload),
-        });
-
-        if (!wbRes.ok) {
-          throw new Error(`n8n HTTP ${wbRes.status}: ${wbRes.statusText}`);
-        }
-
-        const rawText = await wbRes.text();
-        if (rawText && rawText.trim()) {
-          try {
-            const data = JSON.parse(rawText);
-            if (typeof data === 'string') {
-              content = data;
-            } else if (Array.isArray(data) && data.length > 0) {
-              const first = data[0];
-              content = first.generated_email || first.output || first.text || first.response || first.message || first.email || (first.json ? (first.json.generated_email || first.json.output || first.json.text || first.json.response) : '') || '';
-            } else if (typeof data === 'object' && data !== null) {
-              content = data.generated_email || data.output || data.text || data.response || data.message || data.email || '';
-              if (!content && data.result) {
-                content = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+    // 4. Trigger the n8n webhook asynchronously
+    fetch(n8nWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(webhookPayload),
+    })
+      .then(async (wbRes) => {
+        if (wbRes.ok) {
+          const rawText = await wbRes.text();
+          if (rawText && rawText.trim()) {
+            try {
+              const data = JSON.parse(rawText);
+              if (typeof data === 'string') directWebhookContent = data;
+              else if (Array.isArray(data) && data.length > 0) {
+                const first = data[0];
+                directWebhookContent = first.generated_email || first.output || first.text || first.response || first.body || '';
+              } else if (typeof data === 'object' && data !== null) {
+                directWebhookContent = data.generated_email || data.output || data.text || data.response || data.body || '';
               }
+            } catch (_) {
+              if (rawText.length > 30) directWebhookContent = rawText;
             }
-          } catch (_parseErr) {
-            content = rawText;
           }
         }
-      } catch (wbError) {
-        console.error('n8n Webhook trigger error:', wbError);
-        window.alert('Failed to connect to n8n webhook: ' + wbError.message);
-        setIsGenerating(false);
-        return;
-      }
+      })
+      .catch((wbErr) => {
+        console.warn('n8n Webhook trigger note:', wbErr.message);
+      });
 
-      if (!content || !content.trim()) {
-        content = `✓ Details successfully forwarded to your n8n workflow!\n\nNote: n8n received all information, but did not return generated text in the response body.\n\nTo view your generated email directly here, ensure your n8n workflow ends with a "Respond to Webhook" node returning:\n{\n  "generated_email": "Your generated email text"\n}`;
+    // 5. Poll application_emails table in Supabase
+    const pollStartTime = Date.now();
+    const maxPollTimeMs = 120000; // 2 minutes
+
+    const onEmailFound = async (generatedContent) => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
+      setIsGenerating(false);
 
       const newApp = {
         id: Date.now().toString(),
@@ -307,21 +320,42 @@ export default function AppWeb() {
         recipientEmail: recipientEmail.trim(),
         requirements: requirements.trim(),
         description: description.trim(),
-        generatedEmail: content,
-        status: recipientEmail ? 'Applied' : 'Generated',
+        generatedEmail: generatedContent,
+        status: recipientEmail.trim() ? 'Applied' : 'Generated',
         createdAt: new Date().toISOString(),
       };
 
       const updatedList = await saveApplication(userId, newApp);
       if (updatedList) setApplications(updatedList);
-
       setGeneratedResult(newApp);
-    } catch (err) {
-      window.alert('Error submitting application: ' + err.message);
-      console.error(err);
-    } finally {
-      setIsGenerating(false);
-    }
+    };
+
+    pollIntervalRef.current = setInterval(async () => {
+      // Check application_emails table in Supabase
+      const emailRecord = await fetchLatestApplicationEmail(userId, submitTime);
+      if (emailRecord && emailRecord.fullEmail) {
+        await onEmailFound(emailRecord.fullEmail);
+        return;
+      }
+
+      // Check if direct response arrived from webhook
+      if (directWebhookContent && directWebhookContent.trim()) {
+        await onEmailFound(directWebhookContent);
+        return;
+      }
+
+      // Check timeout
+      if (Date.now() - pollStartTime > maxPollTimeMs) {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        setIsGenerating(false);
+        window.alert(
+          'Email generation timed out waiting for output in application_emails table. If your workflow is still processing, please check History in a moment.'
+        );
+      }
+    }, 2000);
   };
 
   // Send Email Action
