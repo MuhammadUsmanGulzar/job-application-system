@@ -73,7 +73,29 @@ export default function AppWeb() {
   const [requirements, setRequirements] = useState('');
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
+
+  // Stopwatch timer for n8n AI email generation
+  useEffect(() => {
+    let interval = null;
+    if (isGenerating) {
+      interval = setInterval(() => {
+        setGenerationSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setGenerationSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isGenerating]);
+
+  const formatTime = (totalSecs) => {
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   // Applications History State
   const [applications, setApplications] = useState([]);
@@ -244,8 +266,8 @@ export default function AppWeb() {
         submitted_at: new Date().toISOString(),
       };
 
-      // 3. Trigger the n8n webhook node
-      let n8nResponseText = '';
+      // 3. Trigger the n8n webhook node & await generation
+      let content = '';
       try {
         const wbRes = await fetch(n8nWebhookUrl, {
           method: 'POST',
@@ -255,45 +277,38 @@ export default function AppWeb() {
           body: JSON.stringify(webhookPayload),
         });
 
-        if (wbRes.ok) {
+        if (!wbRes.ok) {
+          throw new Error(`n8n HTTP ${wbRes.status}: ${wbRes.statusText}`);
+        }
+
+        const rawText = await wbRes.text();
+        if (rawText && rawText.trim()) {
           try {
-            const data = await wbRes.json();
-            if (data?.generated_email || data?.output || data?.text || data?.message) {
-              n8nResponseText = data.generated_email || data.output || data.text || data.message;
+            const data = JSON.parse(rawText);
+            if (typeof data === 'string') {
+              content = data;
+            } else if (Array.isArray(data) && data.length > 0) {
+              const first = data[0];
+              content = first.generated_email || first.output || first.text || first.response || first.message || first.email || (first.json ? (first.json.generated_email || first.json.output || first.json.text || first.json.response) : '') || '';
+            } else if (typeof data === 'object' && data !== null) {
+              content = data.generated_email || data.output || data.text || data.response || data.message || data.email || '';
+              if (!content && data.result) {
+                content = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+              }
             }
-          } catch (e) {
-            // Not json
+          } catch (_parseErr) {
+            content = rawText;
           }
         }
       } catch (wbError) {
-        console.warn('n8n Webhook trigger warning:', wbError);
+        console.error('n8n Webhook trigger error:', wbError);
+        window.alert('Failed to connect to n8n webhook: ' + wbError.message);
+        setIsGenerating(false);
+        return;
       }
 
-      // 4. Generate AI pitch if LLM API Key is configured, or use n8n response
-      let content = n8nResponseText;
-
-      if (!content && settings.llmApiKey.trim()) {
-        try {
-          content = await generateJobApplication({
-            jobTitle,
-            companyName,
-            recipientEmail,
-            requirements,
-            description,
-            resumeContent: settings.resumeContent,
-            resumeName: settings.resumeName,
-            candidateProfile: profile,
-            apiKey: settings.llmApiKey,
-            model: settings.llmModel,
-            provider: settings.llmProvider,
-          });
-        } catch (llmErr) {
-          console.warn('Direct LLM generation notice:', llmErr.message);
-        }
-      }
-
-      if (!content) {
-        content = `✓ Application submitted to n8n workflow!\n\nUser ID: ${userId}\nJob: ${jobTitle}\nCompany: ${companyName || 'Hiring Company'}\nRecipient: ${recipientEmail || 'N/A'}\n\nAll details and your resume have been forwarded to your n8n workflow.`;
+      if (!content || !content.trim()) {
+        content = `✓ Details successfully forwarded to your n8n workflow!\n\nNote: n8n received all information, but did not return generated text in the response body.\n\nTo view your generated email directly here, ensure your n8n workflow ends with a "Respond to Webhook" node returning:\n{\n  "generated_email": "Your generated email text"\n}`;
       }
 
       const newApp = {
@@ -312,7 +327,6 @@ export default function AppWeb() {
       if (updatedList) setApplications(updatedList);
 
       setGeneratedResult(newApp);
-      window.alert('Success! All details (including your User ID) have been sent to your n8n webhook.');
     } catch (err) {
       window.alert('Error submitting application: ' + err.message);
       console.error(err);
@@ -789,7 +803,9 @@ export default function AppWeb() {
                   {isGenerating ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
-                      <Text style={styles.webPrimaryButtonText}>Generating with AI...</Text>
+                      <Text style={styles.webPrimaryButtonText}>
+                        Generating Email... ({formatTime(generationSeconds)})
+                      </Text>
                     </View>
                   ) : (
                     <Text style={styles.webPrimaryButtonText}>⚡ Generate Tailored Application</Text>
@@ -804,7 +820,23 @@ export default function AppWeb() {
                   Review, edit, copy, or send your personalized email directly to the recruiter.
                 </Text>
 
-                {generatedResult ? (
+                {isGenerating ? (
+                  <View style={styles.generatingStateBox}>
+                    <View style={styles.pulseLoaderCircle}>
+                      <ActivityIndicator size="large" color="#2563eb" />
+                    </View>
+                    <Text style={styles.generatingStateTitle}>
+                      Your email is getting ready in a while...
+                    </Text>
+                    <Text style={styles.generatingStateSub}>
+                      Your n8n AI workflow is crafting a tailored, high-converting pitch from your resume & target job details.
+                    </Text>
+                    <View style={styles.timerBadge}>
+                      <Text style={styles.timerIcon}>⏱️</Text>
+                      <Text style={styles.timerCountdown}>{formatTime(generationSeconds)}</Text>
+                    </View>
+                  </View>
+                ) : generatedResult ? (
                   <View style={styles.generatedBox}>
                     <View style={styles.boxHeader}>
                       <View>
@@ -1933,6 +1965,67 @@ const styles = StyleSheet.create({
     color: '#1e293b',
     lineHeight: 22,
     fontFamily: 'monospace',
+  },
+  generatingStateBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#93c5fd',
+    borderStyle: 'dashed',
+    minHeight: 380,
+  },
+  pulseLoaderCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  generatingStateTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1e293b',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  generatingStateSub: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    maxWidth: 420,
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  timerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    borderRadius: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  timerIcon: {
+    fontSize: 18,
+    marginRight: 8,
+  },
+  timerCountdown: {
+    color: '#ffffff',
+    fontSize: 24,
+    fontWeight: '800',
+    fontFamily: 'monospace',
+    letterSpacing: 2,
   },
   emptyPreviewBox: {
     height: 380,

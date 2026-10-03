@@ -73,7 +73,29 @@ export default function App() {
   const [requirements, setRequirements] = useState('');
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
+
+  // Stopwatch timer for n8n AI email generation
+  useEffect(() => {
+    let interval = null;
+    if (isGenerating) {
+      interval = setInterval(() => {
+        setGenerationSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setGenerationSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isGenerating]);
+
+  const formatTime = (totalSecs) => {
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   // History State
   const [applications, setApplications] = useState([]);
@@ -233,8 +255,8 @@ export default function App() {
         submitted_at: new Date().toISOString(),
       };
 
-      // 3. Trigger the n8n webhook node
-      let n8nResponseText = '';
+      // 3. Trigger the n8n webhook node & await generation
+      let content = '';
       try {
         const wbRes = await fetch(n8nWebhookUrl, {
           method: 'POST',
@@ -244,45 +266,38 @@ export default function App() {
           body: JSON.stringify(webhookPayload),
         });
 
-        if (wbRes.ok) {
+        if (!wbRes.ok) {
+          throw new Error(`n8n HTTP ${wbRes.status}: ${wbRes.statusText}`);
+        }
+
+        const rawText = await wbRes.text();
+        if (rawText && rawText.trim()) {
           try {
-            const data = await wbRes.json();
-            if (data?.generated_email || data?.output || data?.text || data?.message) {
-              n8nResponseText = data.generated_email || data.output || data.text || data.message;
+            const data = JSON.parse(rawText);
+            if (typeof data === 'string') {
+              content = data;
+            } else if (Array.isArray(data) && data.length > 0) {
+              const first = data[0];
+              content = first.generated_email || first.output || first.text || first.response || first.message || first.email || (first.json ? (first.json.generated_email || first.json.output || first.json.text || first.json.response) : '') || '';
+            } else if (typeof data === 'object' && data !== null) {
+              content = data.generated_email || data.output || data.text || data.response || data.message || data.email || '';
+              if (!content && data.result) {
+                content = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+              }
             }
-          } catch (e) {
-            // Not json
+          } catch (_parseErr) {
+            content = rawText;
           }
         }
       } catch (wbError) {
-        console.warn('n8n Webhook trigger warning:', wbError);
+        console.error('n8n Webhook trigger error:', wbError);
+        Alert.alert('Connection Failed', 'Failed to reach n8n webhook: ' + wbError.message);
+        setIsGenerating(false);
+        return;
       }
 
-      // 4. Generate AI pitch if LLM API Key is configured, or use n8n response
-      let content = n8nResponseText;
-
-      if (!content && settings.llmApiKey.trim()) {
-        try {
-          content = await generateJobApplication({
-            jobTitle,
-            companyName,
-            recipientEmail,
-            requirements,
-            description,
-            resumeContent: settings.resumeContent,
-            resumeName: settings.resumeName,
-            candidateProfile: profile,
-            apiKey: settings.llmApiKey,
-            model: settings.llmModel,
-            provider: settings.llmProvider,
-          });
-        } catch (llmErr) {
-          console.warn('Direct LLM generation notice:', llmErr.message);
-        }
-      }
-
-      if (!content) {
-        content = `✓ Application submitted to n8n workflow!\n\nUser ID: ${userId}\nJob: ${jobTitle}\nCompany: ${companyName || 'Hiring Company'}\nRecipient: ${recipientEmail || 'N/A'}\n\nAll details and your resume have been forwarded to your n8n workflow.`;
+      if (!content || !content.trim()) {
+        content = `✓ Details successfully forwarded to your n8n workflow!\n\nNote: n8n received all information, but did not return generated text in the response body.\n\nTo view your generated email directly here, ensure your n8n workflow ends with a "Respond to Webhook" node returning:\n{\n  "generated_email": "Your generated email text"\n}`;
       }
 
       const newApp = {
@@ -300,7 +315,6 @@ export default function App() {
       const updatedList = await saveApplication(userId, newApp);
       if (updatedList) setApplications(updatedList);
       setGeneratedResult(newApp);
-      Alert.alert('Success', 'Application details (including your User ID) have been sent to your n8n workflow!');
     } catch (err) {
       Alert.alert('Submission Error', err.message);
     } finally {
@@ -677,7 +691,9 @@ export default function App() {
                 {isGenerating ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.primaryBtnText}>Generating Pitch with AI...</Text>
+                    <Text style={styles.primaryBtnText}>
+                      Generating Email... ({formatTime(generationSeconds)})
+                    </Text>
                   </View>
                 ) : (
                   <Text style={styles.primaryBtnText}>⚡ Generate Tailored Pitch</Text>
@@ -685,8 +701,29 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
+            {/* Active n8n Generating Loader Card */}
+            {isGenerating && (
+              <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, borderWidth: 2, borderColor: '#93c5fd', borderStyle: 'dashed' }]}>
+                <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#bfdbfe' }}>
+                  <ActivityIndicator size="large" color="#2563eb" />
+                </View>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: '#1e293b', textAlign: 'center', marginBottom: 6 }}>
+                  Your email is getting ready in a while...
+                </Text>
+                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', paddingHorizontal: 20, marginBottom: 18, lineHeight: 19 }}>
+                  Your n8n AI workflow is crafting your tailored pitch.
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 24 }}>
+                  <Text style={{ fontSize: 16, marginRight: 6 }}>⏱️</Text>
+                  <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: '800', fontFamily: 'monospace', letterSpacing: 2 }}>
+                    {formatTime(generationSeconds)}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* Generated Result Card */}
-            {generatedResult && (
+            {generatedResult && !isGenerating && (
               <View style={styles.card}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <Text style={styles.cardTitle}>2. Generated Application</Text>
