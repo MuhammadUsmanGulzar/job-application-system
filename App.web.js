@@ -10,7 +10,7 @@ import {
   Modal
 } from 'react-native';
 import { supabase } from './supabase';
-import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication } from './services/storage';
+import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication, uploadResumeFile } from './services/storage';
 import { generateJobApplication } from './services/ai';
 import { sendEmail } from './services/email';
 
@@ -96,7 +96,7 @@ export default function AppWeb() {
     }
   };
 
-  // Resume Upload (Web File Picker)
+  // Resume Upload (Web File Picker & Supabase Storage Bucket)
   const handleUploadResumeWeb = () => {
     if (typeof document !== 'undefined') {
       const input = document.createElement('input');
@@ -106,14 +106,29 @@ export default function AppWeb() {
         const file = e.target.files[0];
         if (file) {
           const reader = new FileReader();
-          reader.onload = (event) => {
+          reader.onload = async (event) => {
             const content = event.target.result;
-            setSettings(prev => ({
-              ...prev,
+            const updated = {
+              ...settings,
               resumeName: file.name,
               resumeContent: typeof content === 'string' ? content : `[Uploaded file: ${file.name}]`,
-            }));
-            setSettingsFeedback(`Uploaded resume: ${file.name}`);
+            };
+            setSettings(updated);
+
+            // Upload directly to user's isolated folder in Supabase Storage bucket
+            if (session?.user?.id) {
+              try {
+                await uploadResumeFile(session.user.id, file, file.name);
+                await saveSettings(session.user.id, updated);
+                setSettingsFeedback(`Uploaded to cloud bucket: ${file.name}`);
+              } catch (storageErr) {
+                console.log('Bucket upload note:', storageErr.message);
+                await saveSettings(session.user.id, updated);
+                setSettingsFeedback(`Saved resume: ${file.name}`);
+              }
+            } else {
+              setSettingsFeedback(`Uploaded resume: ${file.name}`);
+            }
             setTimeout(() => setSettingsFeedback(''), 3000);
           };
           reader.readAsText(file);

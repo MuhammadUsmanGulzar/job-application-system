@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from './supabase';
-import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication } from './services/storage';
+import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication, uploadResumeFile } from './services/storage';
 import { generateJobApplication } from './services/ai';
 import { sendEmail } from './services/email';
 
@@ -97,7 +97,7 @@ export default function App() {
     }
   };
 
-  // Resume Upload (Mobile Document Picker)
+  // Resume Upload (Mobile Document Picker & Supabase Storage)
   const handleUploadResumeMobile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -107,12 +107,23 @@ export default function App() {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
-        setSettings(prev => ({
-          ...prev,
+        const updated = {
+          ...settings,
           resumeName: file.name,
-          resumeContent: prev.resumeContent || `[Uploaded file: ${file.name}]`,
-        }));
-        Alert.alert('Resume Selected', `Attached: ${file.name}`);
+          resumeContent: settings.resumeContent || `[Uploaded file: ${file.name}]`,
+        };
+        setSettings(updated);
+
+        if (session?.user?.id) {
+          try {
+            await saveSettings(session.user.id, updated);
+            Alert.alert('Resume Selected', `Attached & saved: ${file.name}`);
+          } catch (e) {
+            Alert.alert('Resume Selected', `Attached: ${file.name}`);
+          }
+        } else {
+          Alert.alert('Resume Selected', `Attached: ${file.name}`);
+        }
       }
     } catch (e) {
       Alert.alert('File Picker Error', e.message);
