@@ -1,7 +1,43 @@
 /**
  * AI Service for generating custom job application emails / cover letters
- * using OpenAI or compatible LLM APIs.
+ * using OpenAI, Gemini, or Groq LLM APIs.
  */
+
+export const LLM_PROVIDERS_CONFIG = {
+  OpenAI: {
+    name: 'OpenAI',
+    defaultModel: 'gpt-4o-mini',
+    models: [
+      { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cost-Effective)' },
+      { id: 'gpt-4o', label: 'GPT-4o (High Intelligence & Complex Jobs)' },
+      { id: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+      { id: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+    ],
+    placeholder: 'sk-proj-... or sk-...',
+    helpUrl: 'https://platform.openai.com/api-keys',
+  },
+  Gemini: {
+    name: 'Google Gemini',
+    defaultModel: 'gemini-1.5-flash',
+    models: [
+      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Super Fast)' },
+      { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Deep Context)' },
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Next Gen)' },
+    ],
+    placeholder: 'AIzaSy...',
+    helpUrl: 'https://aistudio.google.com/app/apikey',
+  },
+  Groq: {
+    name: 'Groq (Llama 3)',
+    defaultModel: 'llama-3.3-70b-versatile',
+    models: [
+      { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Versatile & Free Tier)' },
+      { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (Ultra Fast)' },
+    ],
+    placeholder: 'gsk_...',
+    helpUrl: 'https://console.groq.com/keys',
+  },
+};
 
 export async function generateJobApplication({
   jobTitle,
@@ -83,7 +119,8 @@ INSTRUCTIONS:
     return data.choices[0]?.message?.content || 'No content generated.';
   } else if (provider === 'Gemini') {
     // Google Gemini API
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.trim()}`;
+    const targetModel = model || 'gemini-1.5-flash';
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey.trim()}`;
     const response = await fetch(geminiUrl, {
       method: 'POST',
       headers: {
@@ -99,12 +136,58 @@ INSTRUCTIONS:
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Gemini API Error: ${err}`);
+      let errorMessage = 'Failed to generate email with Gemini API.';
+      try {
+        const errorData = await response.json();
+        if (errorData?.error?.message) {
+          errorMessage = errorData.error.message;
+        }
+      } catch (e) {
+        // ignore
+      }
+      throw new Error(`Gemini API Error: ${errorMessage}`);
     }
 
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || 'No content generated.';
+  } else if (provider === 'Groq') {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+      body: JSON.stringify({
+        model: model || 'llama-3.3-70b-versatile',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert executive career strategist who crafts bespoke, high-converting job applications and cover emails.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      let errorMessage = 'Failed to generate email with Groq API.';
+      try {
+        const errorData = await response.json();
+        if (errorData?.error?.message) {
+          errorMessage = errorData.error.message;
+        }
+      } catch (e) {
+        // ignore
+      }
+      throw new Error(`Groq API Error (${response.status}): ${errorMessage}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content || 'No content generated.';
   } else {
     throw new Error(`Unsupported LLM provider: ${provider}`);
   }

@@ -16,7 +16,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from './supabase';
 import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication, uploadResumeFile } from './services/storage';
-import { generateJobApplication } from './services/ai';
+import { generateJobApplication, LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
 export default function App() {
@@ -599,28 +599,63 @@ export default function App() {
 
             {/* LLM API Card */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>2. LLM Engine (OpenAI / Gemini)</Text>
-              <Text style={styles.subText}>Replaces old n8n webhook with direct AI generation.</Text>
+              <Text style={styles.cardTitle}>2. LLM Engine (OpenAI / Gemini / Groq)</Text>
+              <Text style={styles.subText}>Select a provider to see its supported models.</Text>
 
-              <Text style={styles.label}>Provider (OpenAI or Gemini)</Text>
+              <Text style={styles.label}>AI Provider</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                {Object.keys(LLM_PROVIDERS_CONFIG).map((provKey) => {
+                  const isSelected = (settings.llmProvider || 'OpenAI') === provKey;
+                  return (
+                    <TouchableOpacity
+                      key={provKey}
+                      style={[
+                        styles.mobileGuideTab,
+                        isSelected && styles.mobileGuideTabActive,
+                        { flex: 1, alignItems: 'center' }
+                      ]}
+                      onPress={() => {
+                        const defModel = LLM_PROVIDERS_CONFIG[provKey]?.defaultModel || '';
+                        setSettings(prev => ({
+                          ...prev,
+                          llmProvider: provKey,
+                          llmModel: defModel,
+                        }));
+                      }}
+                    >
+                      <Text style={[styles.mobileGuideTabText, isSelected && styles.mobileGuideTabTextActive]}>
+                        {provKey}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.label}>Supported Models ({settings.llmProvider || 'OpenAI'})</Text>
+              <View style={{ gap: 6, marginBottom: 12 }}>
+                {(LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI']?.models || []).map((m) => {
+                  const isSelected = settings.llmModel === m.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[
+                        styles.mobileModelOption,
+                        isSelected && styles.mobileModelOptionActive,
+                      ]}
+                      onPress={() => setSettings(prev => ({ ...prev, llmModel: m.id }))}
+                    >
+                      <Text style={[styles.mobileModelText, isSelected && styles.mobileModelTextActive]}>
+                        {isSelected ? '● ' : '○ '} {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.label}>{settings.llmProvider || 'OpenAI'} API Key *</Text>
               <TextInput
                 style={styles.input}
-                value={settings.llmProvider}
-                onChangeText={(val) => setSettings(prev => ({ ...prev, llmProvider: val }))}
-              />
-
-              <Text style={styles.label}>Model Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="gpt-4o-mini"
-                value={settings.llmModel}
-                onChangeText={(val) => setSettings(prev => ({ ...prev, llmModel: val }))}
-              />
-
-              <Text style={styles.label}>API Key *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="sk-..."
+                placeholder={LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI']?.placeholder || 'sk-...'}
                 value={settings.llmApiKey}
                 onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
                 secureTextEntry
@@ -1163,5 +1198,26 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontSize: 11,
     fontWeight: '600',
+  },
+  mobileModelOption: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  mobileModelOptionActive: {
+    borderColor: '#2563eb',
+    backgroundColor: '#eff6ff',
+  },
+  mobileModelText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '500',
+  },
+  mobileModelTextActive: {
+    color: '#2563eb',
+    fontWeight: '700',
   },
 });

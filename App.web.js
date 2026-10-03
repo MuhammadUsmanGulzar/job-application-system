@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { supabase } from './supabase';
 import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication, uploadResumeFile } from './services/storage';
-import { generateJobApplication } from './services/ai';
+import { generateJobApplication, LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
 export default function AppWeb() {
@@ -789,50 +789,87 @@ export default function AppWeb() {
             <View style={styles.webCard}>
               <Text style={styles.sectionTitle}>2. LLM API (OpenAI / AI Engine)</Text>
               <Text style={styles.cardDescription}>
-                Replaces the old n8n webhook. Directly communicates with OpenAI or Gemini to generate job letters.
+                Select your AI provider. The Model dropdown will automatically show only the supported models for that provider.
               </Text>
 
               <View style={styles.formRow}>
-                <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
-                  <Text style={styles.label}>Provider</Text>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    {['OpenAI', 'Gemini'].map((prov) => (
-                      <TouchableOpacity
-                        key={prov}
-                        style={[
-                          styles.providerPill,
-                          settings.llmProvider === prov && styles.providerPillActive,
-                        ]}
-                        onPress={() => setSettings(prev => ({ ...prev, llmProvider: prov }))}
-                      >
-                        <Text style={[
-                          styles.providerPillText,
-                          settings.llmProvider === prov && styles.providerPillTextActive,
-                        ]}>
-                          {prov}
-                        </Text>
-                      </TouchableOpacity>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 14 }]}>
+                  <Text style={styles.label}>AI Provider</Text>
+                  <select
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      backgroundColor: '#ffffff',
+                      color: '#0f172a',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                    value={settings.llmProvider || 'OpenAI'}
+                    onChange={(e) => {
+                      const selectedProv = e.target.value;
+                      const defaultModel = LLM_PROVIDERS_CONFIG[selectedProv]?.defaultModel || '';
+                      setSettings(prev => ({
+                        ...prev,
+                        llmProvider: selectedProv,
+                        llmModel: defaultModel,
+                      }));
+                    }}
+                  >
+                    {Object.keys(LLM_PROVIDERS_CONFIG).map((provKey) => (
+                      <option key={provKey} value={provKey}>
+                        {LLM_PROVIDERS_CONFIG[provKey].name}
+                      </option>
                     ))}
-                  </View>
+                  </select>
                 </View>
 
                 <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Model</Text>
-                  <TextInput
-                    style={styles.webInput}
-                    placeholder="gpt-4o-mini or gpt-4o"
-                    value={settings.llmModel}
-                    onChangeText={(val) => setSettings(prev => ({ ...prev, llmModel: val }))}
-                    placeholderTextColor="#9ca3af"
-                  />
+                  <Text style={styles.label}>Supported Models ({settings.llmProvider})</Text>
+                  <select
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      backgroundColor: '#ffffff',
+                      color: '#0f172a',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                    value={settings.llmModel || LLM_PROVIDERS_CONFIG[settings.llmProvider]?.defaultModel || ''}
+                    onChange={(e) => setSettings(prev => ({ ...prev, llmModel: e.target.value }))}
+                  >
+                    {(LLM_PROVIDERS_CONFIG[settings.llmProvider]?.models || []).map((modelItem) => (
+                      <option key={modelItem.id} value={modelItem.id}>
+                        {modelItem.label}
+                      </option>
+                    ))}
+                  </select>
                 </View>
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>{settings.llmProvider} API Key *</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={styles.label}>{settings.llmProvider} API Key *</Text>
+                  {LLM_PROVIDERS_CONFIG[settings.llmProvider]?.helpUrl ? (
+                    <TouchableOpacity 
+                      onPress={() => window.open(LLM_PROVIDERS_CONFIG[settings.llmProvider].helpUrl, '_blank')}
+                    >
+                      <Text style={{ fontSize: 12, color: '#2563eb', fontWeight: '500' }}>
+                        🔗 Get {settings.llmProvider} Key ↗
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
                 <TextInput
                   style={styles.webInput}
-                  placeholder={`Enter your ${settings.llmProvider} API Key (e.g. sk-...)`}
+                  placeholder={LLM_PROVIDERS_CONFIG[settings.llmProvider]?.placeholder || `Enter your ${settings.llmProvider} API Key`}
                   value={settings.llmApiKey}
                   onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
                   secureTextEntry
