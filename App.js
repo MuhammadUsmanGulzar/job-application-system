@@ -11,6 +11,12 @@ import {
 } from 'react-native';
 
 export default function App() {
+  // Auth state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
   // User settings state
   const [webhookUrl, setWebhookUrl] = useState('');
   
@@ -24,7 +30,7 @@ export default function App() {
   // In a real app, this would be loaded from your auth context / secure storage
   const currentUser = {
     id: 'user-uuid-1234',
-    email: 'user@example.com'
+    email: email || 'user@example.com'
   };
 
   const handleSaveWebhook = () => {
@@ -86,10 +92,66 @@ export default function App() {
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', padding: 20 }]}>
+        <View style={styles.card}>
+          <Text style={[styles.cardTitle, { textAlign: 'center', fontSize: 24, marginBottom: 20 }]}>
+            {isLoginMode ? 'Welcome Back' : 'Create Account'}
+          </Text>
+          
+          <Text style={styles.label}>Email</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter your email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+
+          <Text style={styles.label}>Password</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter your password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+
+          <TouchableOpacity 
+            style={styles.primaryButton}
+            onPress={() => {
+              if (email && password) {
+                setIsAuthenticated(true);
+              } else {
+                Alert.alert('Error', 'Please enter both email and password');
+              }
+            }}
+          >
+            <Text style={styles.primaryButtonText}>{isLoginMode ? 'Login' : 'Sign Up'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={{ marginTop: 20, alignItems: 'center' }}
+            onPress={() => setIsLoginMode(!isLoginMode)}
+          >
+            <Text style={{ color: '#3b82f6', fontWeight: '600' }}>
+              {isLoginMode ? "Don't have an account? Sign Up" : "Already have an account? Login"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Job Application Portal</Text>
+      <View style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+        <Text style={styles.headerTitle}>Portal</Text>
+        <TouchableOpacity onPress={() => setIsAuthenticated(false)}>
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>Logout</Text>
+        </TouchableOpacity>
       </View>
 
       {/* User Settings Section */}
