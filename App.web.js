@@ -95,9 +95,10 @@ export default function AppWeb() {
         {/* Left Side: Hero Section */}
         <View style={styles.leftPanel}>
           <View style={styles.heroContent}>
-            <Text style={styles.heroTitle}>Job Application System</Text>
+            <Text style={styles.overline}>JOB PORTAL SYSTEM</Text>
+            <Text style={styles.heroTitle}>Manage job{"\n"}applications into{"\n"}a working{"\n"}pipeline.</Text>
             <Text style={styles.heroSubtitle}>
-              Streamline your hiring process. Connect directly to your n8n workflows and manage applications effortlessly.
+              Sign in to run your application tracking and keep your team's results in one private workspace.
             </Text>
           </View>
         </View>
@@ -105,25 +106,33 @@ export default function AppWeb() {
         {/* Right Side: Auth Form */}
         <View style={styles.rightPanel}>
           <View style={styles.authCard}>
+            
+            <View style={styles.tabsContainer}>
+              <TouchableOpacity onPress={() => setIsLoginMode(true)} style={[styles.tab, isLoginMode && styles.activeTab]}>
+                <Text style={[styles.tabText, isLoginMode && styles.activeTabText]}>Sign in</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setIsLoginMode(false)} style={[styles.tab, !isLoginMode && styles.activeTab]}>
+                <Text style={[styles.tabText, !isLoginMode && styles.activeTabText]}>Create account</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.authHeader}>
               <Text style={styles.authTitle}>
-                {isLoginMode ? 'Welcome Back' : 'Create Account'}
+                {isLoginMode ? 'Welcome back' : 'Create account'}
               </Text>
               <Text style={styles.authSubtitle}>
-                {isLoginMode ? 'Enter your details to access the portal' : 'Sign up to get started'}
+                {isLoginMode ? 'Use the email connected to your account.' : 'Sign up to create your workspace.'}
               </Text>
             </View>
             
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Email Address</Text>
+              <Text style={styles.label}>Email</Text>
               <TextInput
                 style={styles.webInput}
-                placeholder="name@example.com"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                placeholderTextColor="#9ca3af"
               />
             </View>
 
@@ -131,11 +140,9 @@ export default function AppWeb() {
               <Text style={styles.label}>Password</Text>
               <TextInput
                 style={styles.webInput}
-                placeholder="••••••••"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
-                placeholderTextColor="#9ca3af"
               />
             </View>
 
@@ -149,16 +156,7 @@ export default function AppWeb() {
                 }
               }}
             >
-              <Text style={styles.webPrimaryButtonText}>{isLoginMode ? 'Sign In' : 'Sign Up'}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={{ marginTop: 24, alignItems: 'center' }}
-              onPress={() => setIsLoginMode(!isLoginMode)}
-            >
-              <Text style={{ color: '#4f46e5', fontWeight: '500', fontSize: 14 }}>
-                {isLoginMode ? "Don't have an account? Create one" : "Already have an account? Sign in"}
-              </Text>
+              <Text style={styles.webPrimaryButtonText}>{isLoginMode ? 'Sign in' : 'Create account'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -266,60 +264,96 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     height: '100vh',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#0a0f0d', // dark background
   },
   leftPanel: {
     flex: 1,
-    backgroundColor: '#4f46e5',
     justifyContent: 'center',
     padding: 60,
+    paddingLeft: '10%',
+    // gradient simulation:
+    backgroundImage: 'radial-gradient(circle at left center, #1b3628 0%, #0a0f0d 50%)',
   },
   heroContent: {
-    maxWidth: 500,
+    maxWidth: 600,
+  },
+  overline: {
+    color: '#c4f068',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    marginBottom: 24,
+    textTransform: 'uppercase',
   },
   heroTitle: {
-    color: '#ffffff',
-    fontSize: 48,
+    color: '#f4f4f5',
+    fontSize: 64,
     fontWeight: '800',
     marginBottom: 24,
-    lineHeight: 56,
+    lineHeight: 70,
+    fontFamily: 'System', // fall back to sans-serif
   },
   heroSubtitle: {
-    color: '#e0e7ff',
-    fontSize: 20,
-    lineHeight: 30,
+    color: '#9ca3af',
+    fontSize: 18,
+    lineHeight: 28,
   },
   rightPanel: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#0a0f0d',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
   },
   authCard: {
     width: '100%',
-    maxWidth: 440,
-    backgroundColor: '#ffffff',
-    padding: 48,
-    borderRadius: 16,
+    maxWidth: 420,
+    backgroundColor: '#121a17',
+    padding: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#24332d',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
   },
-  authHeader: {
+  tabsContainer: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#24332d',
     marginBottom: 32,
   },
+  tab: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginRight: 10,
+  },
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#c4f068',
+  },
+  tabText: {
+    color: '#6b7280',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  activeTabText: {
+    color: '#f4f4f5',
+    fontWeight: '600',
+  },
+  authHeader: {
+    marginBottom: 24,
+  },
   authTitle: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 8,
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#f4f4f5',
+    marginBottom: 10,
   },
   authSubtitle: {
-    fontSize: 15,
-    color: '#6b7280',
+    fontSize: 14,
+    color: '#9ca3af',
   },
   
   // Common Form Styles
@@ -327,36 +361,37 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#f4f4f5',
     marginBottom: 8,
   },
   webInput: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 14,
+    borderColor: '#24332d',
+    borderRadius: 6,
+    padding: 12,
     fontSize: 15,
-    backgroundColor: '#ffffff',
-    color: '#111827',
+    backgroundColor: '#0a0f0d',
+    color: '#f4f4f5',
+    outlineStyle: 'none',
   },
   textArea: {
     height: 120,
-    paddingTop: 14,
+    paddingTop: 12,
     outlineStyle: 'none',
   },
   webPrimaryButton: {
-    backgroundColor: '#4f46e5',
-    padding: 16,
-    borderRadius: 8,
+    backgroundColor: '#c4f068',
+    padding: 14,
+    borderRadius: 6,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 12,
   },
   webPrimaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#0a0f0d',
+    fontSize: 15,
+    fontWeight: '700',
   },
   disabledButton: {
     backgroundColor: '#a5b4fc',
@@ -365,23 +400,23 @@ const styles = StyleSheet.create({
   // App Portal Styles
   webAppContainer: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#0a0f0d',
     height: '100vh',
   },
   webNavbar: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121a17',
     height: 70,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 40,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#24332d',
   },
   navbarBrand: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: '#f4f4f5',
   },
   navbarRight: {
     flexDirection: 'row',
@@ -389,13 +424,13 @@ const styles = StyleSheet.create({
   },
   userEmail: {
     marginRight: 20,
-    color: '#6b7280',
+    color: '#9ca3af',
     fontSize: 14,
   },
   logoutButton: {
     paddingVertical: 8,
     paddingHorizontal: 16,
-    backgroundColor: '#fee2e2',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
     borderRadius: 6,
   },
   logoutText: {
@@ -409,40 +444,36 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     width: '100%',
-    maxWidth: 800,
+    maxWidth: 600,
     gap: 24,
   },
   webCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121a17',
     padding: 32,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: '#24332d',
     marginBottom: 24,
   },
   cardTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: '#f4f4f5',
     marginBottom: 4,
   },
   cardDescription: {
     fontSize: 14,
-    color: '#6b7280',
+    color: '#9ca3af',
     marginBottom: 24,
   },
   webSecondaryButton: {
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#1f2e28',
     padding: 14,
     borderRadius: 8,
     alignItems: 'center',
   },
   webSecondaryButtonText: {
-    color: '#374151',
+    color: '#c4f068',
     fontSize: 15,
     fontWeight: '600',
   }
