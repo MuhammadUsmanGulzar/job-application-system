@@ -18,6 +18,9 @@ export default function AppWeb() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -127,6 +130,18 @@ export default function AppWeb() {
                 {isLoginMode ? 'Enter your details to access the portal' : 'Sign up to get started'}
               </Text>
             </View>
+
+            {authError ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorBannerText}>{authError}</Text>
+              </View>
+            ) : null}
+
+            {authMessage ? (
+              <View style={styles.successBanner}>
+                <Text style={styles.successBannerText}>{authMessage}</Text>
+              </View>
+            ) : null}
             
             <View style={styles.formGroup}>
               <Text style={styles.label}>Email Address</Text>
@@ -154,34 +169,78 @@ export default function AppWeb() {
             </View>
 
             <TouchableOpacity 
-              style={styles.webPrimaryButton}
+              style={[styles.webPrimaryButton, authLoading && styles.disabledButton]}
+              disabled={authLoading}
               onPress={async () => {
+                setAuthError('');
+                setAuthMessage('');
+
+                if (!email.trim() || !password.trim()) {
+                  setAuthError('Please enter both email and password');
+                  return;
+                }
+
+                setAuthLoading(true);
+
                 try {
-                  if (!email || !password) {
-                    window.alert('Please enter both email and password');
-                    return;
-                  }
-                  
                   if (isLoginMode) {
-                    const { error } = await supabase.auth.signInWithPassword({ email, password });
-                    if (error) window.alert('Login Error: ' + error.message);
+                    const { data, error } = await supabase.auth.signInWithPassword({
+                      email: email.trim(),
+                      password: password.trim(),
+                    });
+                    if (error) {
+                      setAuthError(error.message);
+                    } else if (data?.session) {
+                      setSession(data.session);
+                      setIsAuthenticated(true);
+                    }
                   } else {
-                    const { error } = await supabase.auth.signUp({ email, password });
-                    if (error) window.alert('Signup Error: ' + error.message);
-                    else window.alert('Success! Check your email for the confirmation link or try signing in if auto-confirm is enabled!');
+                    const { data, error } = await supabase.auth.signUp({
+                      email: email.trim(),
+                      password: password.trim(),
+                    });
+                    if (error) {
+                      setAuthError(error.message);
+                    } else if (data?.session) {
+                      setAuthMessage('Account created and signed in successfully!');
+                      setSession(data.session);
+                      setIsAuthenticated(true);
+                    } else if (data?.user) {
+                      // Attempt immediate sign in in case auto-confirm is enabled
+                      const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
+                        email: email.trim(),
+                        password: password.trim(),
+                      });
+                      if (!loginErr && loginData?.session) {
+                        setSession(loginData.session);
+                        setIsAuthenticated(true);
+                      } else {
+                        setAuthMessage('Account created! Please check your email or disable "Confirm email" in Supabase to log in instantly.');
+                      }
+                    }
                   }
                 } catch (err) {
-                  window.alert('Unexpected error: ' + err.message);
+                  setAuthError('Unexpected error: ' + err.message);
                   console.error(err);
+                } finally {
+                  setAuthLoading(false);
                 }
               }}
             >
-              <Text style={styles.webPrimaryButtonText}>{isLoginMode ? 'Sign In' : 'Sign Up'}</Text>
+              {authLoading ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.webPrimaryButtonText}>{isLoginMode ? 'Sign In' : 'Sign Up'}</Text>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity 
               style={{ marginTop: 24, alignItems: 'center' }}
-              onPress={() => setIsLoginMode(!isLoginMode)}
+              onPress={() => {
+                setIsLoginMode(!isLoginMode);
+                setAuthError('');
+                setAuthMessage('');
+              }}
             >
               <Text style={{ color: '#4f46e5', fontWeight: '500', fontSize: 14 }}>
                 {isLoginMode ? "Don't have an account? Create one" : "Already have an account? Sign in"}
@@ -347,6 +406,34 @@ const styles = StyleSheet.create({
   authSubtitle: {
     fontSize: 15,
     color: '#6b7280',
+  },
+  errorBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 18,
+  },
+  errorBannerText: {
+    color: '#dc2626',
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+  },
+  successBanner: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#6ee7b7',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 18,
+  },
+  successBannerText: {
+    color: '#059669',
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
   },
   
   // Common Form Styles
