@@ -48,20 +48,20 @@ export default function AppWeb() {
 
   const handleSaveWebhook = () => {
     if (!webhookUrl.startsWith('http')) {
-      Alert.alert('Invalid URL', 'Please enter a valid http/https URL.');
+      window.alert('Please enter a valid http/https URL.');
       return;
     }
-    Alert.alert('Success', 'Your API Webhook has been saved!');
+    window.alert('Your API Webhook has been saved!');
   };
 
   const handleSubmitApplication = async () => {
     if (!webhookUrl) {
-      Alert.alert('Missing API', 'Please enter your n8n Webhook URL in the settings first.');
+      window.alert('Please enter your n8n Webhook URL in the settings first.');
       return;
     }
 
     if (!jobTitle || !requirements) {
-      Alert.alert('Missing Fields', 'Please fill in the Job Title and Requirements.');
+      window.alert('Please fill in the Job Title and Requirements.');
       return;
     }
 
@@ -88,15 +88,15 @@ export default function AppWeb() {
       });
 
       if (response.ok) {
-        Alert.alert('Success!', 'Job application data sent to your n8n workflow.');
+        window.alert('Success! Job application data sent to your n8n workflow.');
         setJobTitle('');
         setRequirements('');
         setDescription('');
       } else {
-        Alert.alert('Error', 'Failed to send data. Check your n8n webhook configuration.');
+        window.alert('Error: Failed to send data. Check your n8n webhook configuration.');
       }
     } catch (error) {
-      Alert.alert('Network Error', 'Could not reach the webhook URL.');
+      window.alert('Network Error: Could not reach the webhook URL.');
       console.error(error);
     } finally {
       setIsLoading(false);
@@ -156,18 +156,23 @@ export default function AppWeb() {
             <TouchableOpacity 
               style={styles.webPrimaryButton}
               onPress={async () => {
-                if (!email || !password) {
-                  Alert.alert('Error', 'Please enter both email and password');
-                  return;
-                }
-                
-                if (isLoginMode) {
-                  const { error } = await supabase.auth.signInWithPassword({ email, password });
-                  if (error) Alert.alert('Login Error', error.message);
-                } else {
-                  const { error } = await supabase.auth.signUp({ email, password });
-                  if (error) Alert.alert('Signup Error', error.message);
-                  else Alert.alert('Success', 'Check your email for the confirmation link or try signing in if auto-confirm is enabled!');
+                try {
+                  if (!email || !password) {
+                    window.alert('Please enter both email and password');
+                    return;
+                  }
+                  
+                  if (isLoginMode) {
+                    const { error } = await supabase.auth.signInWithPassword({ email, password });
+                    if (error) window.alert('Login Error: ' + error.message);
+                  } else {
+                    const { error } = await supabase.auth.signUp({ email, password });
+                    if (error) window.alert('Signup Error: ' + error.message);
+                    else window.alert('Success! Check your email for the confirmation link or try signing in if auto-confirm is enabled!');
+                  }
+                } catch (err) {
+                  window.alert('Unexpected error: ' + err.message);
+                  console.error(err);
                 }
               }}
             >
