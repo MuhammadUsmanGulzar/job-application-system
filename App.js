@@ -15,7 +15,17 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from './supabase';
-import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication, uploadResumeFile } from './services/storage';
+import { 
+  getSettings, 
+  saveSettings, 
+  getApplications, 
+  saveApplication, 
+  deleteApplication, 
+  uploadResumeFile,
+  getProfile,
+  saveProfile,
+  defaultProfile
+} from './services/storage';
 import { generateJobApplication, LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
@@ -31,8 +41,13 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authMessage, setAuthMessage] = useState('');
 
-  // Active Tab: 'apply' | 'history' | 'settings'
+  // Active Tab: 'apply' | 'profile' | 'history' | 'settings'
   const [activeTab, setActiveTab] = useState('apply');
+
+  // Candidate Profile State
+  const [profile, setProfile] = useState(defaultProfile);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileFeedback, setProfileFeedback] = useState('');
 
   // User Settings & Integrations
   const [settings, setSettings] = useState({
@@ -70,7 +85,7 @@ export default function App() {
       setSession(session);
       setIsAuthenticated(!!session);
       if (session?.user?.id) {
-        loadUserData(session.user.id);
+        loadUserData(session.user.id, session.user.email);
       }
     });
 
@@ -78,18 +93,36 @@ export default function App() {
       setSession(session);
       setIsAuthenticated(!!session);
       if (session?.user?.id) {
-        loadUserData(session.user.id);
+        loadUserData(session.user.id, session.user.email);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const loadUserData = async (userId) => {
+  const loadUserData = async (userId, userEmail) => {
     const userSettings = await getSettings(userId);
     setSettings(userSettings);
+    const userProfile = await getProfile(userId, userEmail);
+    setProfile(userProfile);
     const userApps = await getApplications(userId);
     setApplications(userApps);
+  };
+
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    setProfileFeedback('');
+    try {
+      await saveProfile(session?.user?.id, profile);
+      setProfileFeedback('Profile details saved successfully!');
+      Alert.alert('Saved', 'Profile details and links saved successfully!');
+      setTimeout(() => setProfileFeedback(''), 3000);
+    } catch (err) {
+      setProfileFeedback('Failed to save: ' + err.message);
+      Alert.alert('Error', 'Failed to save profile: ' + err.message);
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleSaveSection = async (section) => {
@@ -189,6 +222,14 @@ export default function App() {
         llm_provider: settings.llmProvider || 'OpenAI',
         llm_model: settings.llmModel || 'gpt-4o-mini',
         google_sender_email: settings.googleSenderEmail || '',
+        candidate_name: profile.fullName || userEmail?.split('@')[0] || '',
+        phone: profile.phone || '',
+        portfolio: profile.portfolio || '',
+        linkedin: profile.linkedin || '',
+        github: profile.github || '',
+        headline: profile.headline || '',
+        location: profile.location || '',
+        candidate_profile: profile,
         submitted_at: new Date().toISOString(),
       };
 
@@ -230,6 +271,7 @@ export default function App() {
             description,
             resumeContent: settings.resumeContent,
             resumeName: settings.resumeName,
+            candidateProfile: profile,
             apiKey: settings.llmApiKey,
             model: settings.llmModel,
             provider: settings.llmProvider,
@@ -553,6 +595,13 @@ export default function App() {
         </TouchableOpacity>
 
         <TouchableOpacity 
+          style={[styles.tabItem, activeTab === 'profile' && styles.tabItemActive]}
+          onPress={() => setActiveTab('profile')}
+        >
+          <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>👤 Profile</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
           style={[styles.tabItem, activeTab === 'history' && styles.tabItemActive]}
           onPress={() => setActiveTab('history')}
         >
@@ -657,7 +706,140 @@ export default function App() {
           </View>
         )}
 
-        {/* ================= TAB 2: HISTORY ================= */}
+        {/* ================= TAB 2: CANDIDATE PROFILE ================= */}
+        {activeTab === 'profile' && (
+          <View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>👤 Candidate Profile & Socials</Text>
+              <Text style={styles.subText}>
+                Your contact details, portfolio, and LinkedIn are automatically added to job emails and synced with n8n.
+              </Text>
+
+              <Text style={[styles.label, { marginTop: 12 }]}>Full Name *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Alex Johnson"
+                value={profile.fullName}
+                onChangeText={(val) => setProfile(p => ({ ...p, fullName: val }))}
+              />
+
+              <Text style={styles.label}>Professional Headline / Role</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Senior Full-Stack Engineer | React & Node"
+                value={profile.headline}
+                onChangeText={(val) => setProfile(p => ({ ...p, headline: val }))}
+              />
+
+              <Text style={styles.label}>Email Address *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="name@example.com"
+                value={profile.email}
+                onChangeText={(val) => setProfile(p => ({ ...p, email: val }))}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.label}>Phone Number (with Country Code) *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="+1 (555) 019-2834"
+                value={profile.phone}
+                onChangeText={(val) => setProfile(p => ({ ...p, phone: val }))}
+                keyboardType="phone-pad"
+              />
+
+              <Text style={styles.label}>Portfolio / Personal Website URL *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="https://yourportfolio.dev"
+                value={profile.portfolio}
+                onChangeText={(val) => setProfile(p => ({ ...p, portfolio: val }))}
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.label}>LinkedIn Profile URL *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="https://linkedin.com/in/username"
+                value={profile.linkedin}
+                onChangeText={(val) => setProfile(p => ({ ...p, linkedin: val }))}
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.label}>GitHub Profile URL</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="https://github.com/username"
+                value={profile.github}
+                onChangeText={(val) => setProfile(p => ({ ...p, github: val }))}
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.label}>Location / Remote Preference</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. San Francisco, CA / Remote"
+                value={profile.location}
+                onChangeText={(val) => setProfile(p => ({ ...p, location: val }))}
+              />
+
+              <Text style={styles.label}>Short Bio / Executive Summary</Text>
+              <TextInput
+                style={[styles.input, styles.textArea, { height: 90 }]}
+                placeholder="Brief summary of your primary skills and achievements..."
+                value={profile.bio}
+                onChangeText={(val) => setProfile(p => ({ ...p, bio: val }))}
+                multiline
+              />
+
+              {/* Email Signature Live Preview */}
+              <View style={{ marginTop: 14, marginBottom: 8, padding: 14, backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e293b', textTransform: 'uppercase', marginBottom: 6 }}>
+                  ✉️ Email Signature Preview
+                </Text>
+                <View style={{ padding: 12, backgroundColor: '#ffffff', borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                    {profile.fullName || 'Candidate Name'}
+                  </Text>
+                  {profile.headline ? (
+                    <Text style={{ fontSize: 13, color: '#2563eb', fontWeight: '600', marginTop: 2 }}>
+                      {profile.headline}
+                    </Text>
+                  ) : null}
+                  <View style={{ marginTop: 6, gap: 3 }}>
+                    {profile.email ? <Text style={{ fontSize: 12, color: '#475569' }}>📧 {profile.email}</Text> : null}
+                    {profile.phone ? <Text style={{ fontSize: 12, color: '#475569' }}>📱 {profile.phone}</Text> : null}
+                    {profile.portfolio ? <Text style={{ fontSize: 12, color: '#2563eb' }}>🌐 {profile.portfolio}</Text> : null}
+                    {profile.linkedin ? <Text style={{ fontSize: 12, color: '#2563eb' }}>💼 {profile.linkedin}</Text> : null}
+                    {profile.github ? <Text style={{ fontSize: 12, color: '#2563eb' }}>💻 {profile.github}</Text> : null}
+                    {profile.location ? <Text style={{ fontSize: 12, color: '#64748b' }}>📍 {profile.location}</Text> : null}
+                  </View>
+                </View>
+              </View>
+
+              <TouchableOpacity 
+                style={[styles.primaryBtn, isSavingProfile && styles.disabledBtn, { marginTop: 12 }]}
+                onPress={handleSaveProfile}
+                disabled={isSavingProfile}
+              >
+                {isSavingProfile ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryBtnText}>💾 Save Profile Details</Text>
+                )}
+              </TouchableOpacity>
+              {profileFeedback ? (
+                <Text style={{ marginTop: 8, color: '#059669', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+                  {profileFeedback}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        )}
+
+        {/* ================= TAB 3: HISTORY ================= */}
         {activeTab === 'history' && (
           <View>
             <View style={styles.card}>

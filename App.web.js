@@ -10,7 +10,17 @@ import {
   Modal
 } from 'react-native';
 import { supabase } from './supabase';
-import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication, uploadResumeFile } from './services/storage';
+import { 
+  getSettings, 
+  saveSettings, 
+  getApplications, 
+  saveApplication, 
+  deleteApplication, 
+  uploadResumeFile,
+  getProfile,
+  saveProfile,
+  defaultProfile
+} from './services/storage';
 import { generateJobApplication, LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
@@ -26,8 +36,13 @@ export default function AppWeb() {
   const [authError, setAuthError] = useState('');
   const [authMessage, setAuthMessage] = useState('');
 
-  // Active navigation tab: 'apply' | 'history' | 'settings'
+  // Active navigation tab: 'apply' | 'history' | 'profile' | 'settings'
   const [activeTab, setActiveTab] = useState('apply');
+
+  // Candidate Profile State
+  const [profile, setProfile] = useState(defaultProfile);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileFeedback, setProfileFeedback] = useState('');
 
   // User Settings & Integrations
   const [settings, setSettings] = useState({
@@ -71,7 +86,7 @@ export default function AppWeb() {
       setSession(session);
       setIsAuthenticated(!!session);
       if (session?.user?.id) {
-        loadUserData(session.user.id);
+        loadUserData(session.user.id, session.user.email);
       }
     });
 
@@ -79,18 +94,34 @@ export default function AppWeb() {
       setSession(session);
       setIsAuthenticated(!!session);
       if (session?.user?.id) {
-        loadUserData(session.user.id);
+        loadUserData(session.user.id, session.user.email);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const loadUserData = async (userId) => {
+  const loadUserData = async (userId, userEmail) => {
     const userSettings = await getSettings(userId);
     setSettings(userSettings);
+    const userProfile = await getProfile(userId, userEmail);
+    setProfile(userProfile);
     const userApps = await getApplications(userId);
     setApplications(userApps);
+  };
+
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    setProfileFeedback('');
+    try {
+      await saveProfile(session?.user?.id, profile);
+      setProfileFeedback('✓ Profile details saved successfully!');
+      setTimeout(() => setProfileFeedback(''), 3500);
+    } catch (err) {
+      setProfileFeedback('Failed to save profile: ' + err.message);
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const handleSaveSection = async (section) => {
@@ -202,6 +233,14 @@ export default function AppWeb() {
         llm_provider: settings.llmProvider || 'OpenAI',
         llm_model: settings.llmModel || 'gpt-4o-mini',
         google_sender_email: settings.googleSenderEmail || '',
+        candidate_name: profile.fullName || userEmail?.split('@')[0] || '',
+        phone: profile.phone || '',
+        portfolio: profile.portfolio || '',
+        linkedin: profile.linkedin || '',
+        github: profile.github || '',
+        headline: profile.headline || '',
+        location: profile.location || '',
+        candidate_profile: profile,
         submitted_at: new Date().toISOString(),
       };
 
@@ -243,6 +282,7 @@ export default function AppWeb() {
             description,
             resumeContent: settings.resumeContent,
             resumeName: settings.resumeName,
+            candidateProfile: profile,
             apiKey: settings.llmApiKey,
             model: settings.llmModel,
             provider: settings.llmProvider,
@@ -610,6 +650,15 @@ export default function AppWeb() {
           </TouchableOpacity>
 
           <TouchableOpacity 
+            style={[styles.navTabItem, activeTab === 'profile' && styles.navTabItemActive]} 
+            onPress={() => setActiveTab('profile')}
+          >
+            <Text style={[styles.navTabText, activeTab === 'profile' && styles.navTabTextActive]}>
+              👤 Candidate Profile
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
             style={[styles.navTabItem, activeTab === 'history' && styles.navTabItemActive]} 
             onPress={() => setActiveTab('history')}
           >
@@ -796,7 +845,197 @@ export default function AppWeb() {
           </View>
         )}
 
-        {/* ================= TAB 2: APPLICATION HISTORY ================= */}
+        {/* ================= TAB 2: CANDIDATE PROFILE & SOCIALS ================= */}
+        {activeTab === 'profile' && (
+          <View style={styles.pageContainer}>
+            <View style={styles.webCard}>
+              <View style={styles.cardHeader}>
+                <View style={styles.iconCircle}>
+                  <Text style={{ fontSize: 20 }}>👤</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>Candidate Profile & Professional Links</Text>
+                  <Text style={styles.cardSubtitle}>
+                    Add your phone number, portfolio, LinkedIn, and social links. These details are automatically injected into your job application emails and sent to hiring managers.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Row 1: Full Name & Professional Headline */}
+              <View style={{ flexDirection: 'row', gap: 16 }}>
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Full Name *</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="e.g. Alex Johnson"
+                    value={profile.fullName}
+                    onChangeText={(val) => setProfile(p => ({ ...p, fullName: val }))}
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Professional Headline / Target Role</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="e.g. Senior Full-Stack Engineer | AI & Cloud"
+                    value={profile.headline}
+                    onChangeText={(val) => setProfile(p => ({ ...p, headline: val }))}
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              {/* Row 2: Email & Phone Number */}
+              <View style={{ flexDirection: 'row', gap: 16 }}>
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Email Address (Recruiter Contact) *</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="name@example.com"
+                    value={profile.email}
+                    onChangeText={(val) => setProfile(p => ({ ...p, email: val }))}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Phone Number (with Country Code) *</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="+1 (555) 019-2834"
+                    value={profile.phone}
+                    onChangeText={(val) => setProfile(p => ({ ...p, phone: val }))}
+                    keyboardType="phone-pad"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              {/* Row 3: Portfolio & LinkedIn */}
+              <View style={{ flexDirection: 'row', gap: 16 }}>
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Portfolio / Personal Website URL *</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="https://yourportfolio.dev"
+                    value={profile.portfolio}
+                    onChangeText={(val) => setProfile(p => ({ ...p, portfolio: val }))}
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>LinkedIn Profile URL *</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="https://linkedin.com/in/username"
+                    value={profile.linkedin}
+                    onChangeText={(val) => setProfile(p => ({ ...p, linkedin: val }))}
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              {/* Row 4: GitHub & Location */}
+              <View style={{ flexDirection: 'row', gap: 16 }}>
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>GitHub Profile URL</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="https://github.com/username"
+                    value={profile.github}
+                    onChangeText={(val) => setProfile(p => ({ ...p, github: val }))}
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Location / Relocation Preferences</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="e.g. San Francisco, CA / Remote"
+                    value={profile.location}
+                    onChangeText={(val) => setProfile(p => ({ ...p, location: val }))}
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              {/* Row 5: Candidate Bio / Executive Summary */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Executive Summary / Key Highlights (Context for AI Pitch)</Text>
+                <TextInput
+                  style={[styles.webInput, styles.textArea]}
+                  placeholder="e.g. Seasoned software engineer with 6+ years specializing in Next.js, React, Node.js, and cloud architectures. Passionate about AI-driven developer tooling..."
+                  value={profile.bio}
+                  onChangeText={(val) => setProfile(p => ({ ...p, bio: val }))}
+                  multiline
+                  numberOfLines={3}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+
+              {/* Live Email Signature Preview Card */}
+              <View style={{ marginTop: 10, marginBottom: 20, padding: 18, backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                    ✉️ Live Email Signature Preview
+                  </Text>
+                  <View style={{ marginLeft: 8, backgroundColor: '#dbeafe', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: '#1d4ed8' }}>Auto-injected into Applications</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 14 }}>
+                  This professional signature will automatically close out every generated cover letter & email:
+                </Text>
+
+                <View style={{ padding: 16, backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
+                    {profile.fullName || 'Candidate Full Name'}
+                  </Text>
+                  {profile.headline ? (
+                    <Text style={{ fontSize: 13, color: '#2563eb', fontWeight: '600', marginTop: 2 }}>
+                      {profile.headline}
+                    </Text>
+                  ) : null}
+
+                  <View style={{ marginTop: 10, gap: 5 }}>
+                    {profile.email ? <Text style={{ fontSize: 13, color: '#475569' }}>📧 {profile.email}</Text> : null}
+                    {profile.phone ? <Text style={{ fontSize: 13, color: '#475569' }}>📱 {profile.phone}</Text> : null}
+                    {profile.portfolio ? <Text style={{ fontSize: 13, color: '#2563eb' }}>🌐 {profile.portfolio}</Text> : null}
+                    {profile.linkedin ? <Text style={{ fontSize: 13, color: '#2563eb' }}>💼 {profile.linkedin}</Text> : null}
+                    {profile.github ? <Text style={{ fontSize: 13, color: '#2563eb' }}>💻 {profile.github}</Text> : null}
+                    {profile.location ? <Text style={{ fontSize: 13, color: '#64748b' }}>📍 {profile.location}</Text> : null}
+                  </View>
+                </View>
+              </View>
+
+              {/* Save Button */}
+              <View style={styles.cardActionRow}>
+                <TouchableOpacity 
+                  style={[styles.sectionSaveBtn, isSavingProfile && styles.disabledButton]}
+                  onPress={handleSaveProfile}
+                  disabled={isSavingProfile}
+                >
+                  {isSavingProfile ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={styles.sectionSaveBtnText}>💾 Save Profile Details</Text>
+                  )}
+                </TouchableOpacity>
+                {profileFeedback ? <Text style={styles.sectionFeedbackText}>{profileFeedback}</Text> : null}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* ================= TAB 3: APPLICATION HISTORY ================= */}
         {activeTab === 'history' && (
           <View style={styles.pageContainer}>
             <View style={styles.historyHeader}>

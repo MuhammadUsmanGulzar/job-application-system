@@ -3,6 +3,19 @@ import { supabase } from '../supabase';
 
 const SETTINGS_KEY = '@job_system_settings';
 const APPLICATIONS_KEY = '@job_system_applications';
+const PROFILE_KEY = '@job_system_profile';
+
+export const defaultProfile = {
+  fullName: '',
+  email: '',
+  phone: '',
+  headline: '',
+  portfolio: '',
+  linkedin: '',
+  github: '',
+  location: '',
+  bio: '',
+};
 
 export const defaultSettings = {
   llmProvider: 'OpenAI',
@@ -14,6 +27,105 @@ export const defaultSettings = {
   resumeName: '',
   resumeContent: '',
 };
+
+// --------------------------------------------------------
+// USER PROFILE & CONTACT DETAILS
+// --------------------------------------------------------
+
+export async function getProfile(userId, fallbackEmail = '') {
+  let profile = { ...defaultProfile, email: fallbackEmail };
+
+  // 1. Try reading from Supabase
+  if (userId) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (!error && data) {
+        profile = {
+          fullName: data.full_name || '',
+          email: data.email || fallbackEmail,
+          phone: data.phone || '',
+          headline: data.headline || '',
+          portfolio: data.portfolio || '',
+          linkedin: data.linkedin || '',
+          github: data.github || '',
+          location: data.location || '',
+          bio: data.bio || '',
+        };
+        await AsyncStorage.setItem(`${PROFILE_KEY}_${userId}`, JSON.stringify(profile));
+        return profile;
+      }
+    } catch (e) {
+      console.log('Supabase profile load notice:', e.message);
+    }
+  }
+
+  // 2. Fallback to AsyncStorage
+  try {
+    const key = userId ? `${PROFILE_KEY}_${userId}` : PROFILE_KEY;
+    const cached = await AsyncStorage.getItem(key);
+    if (cached) {
+      return { ...defaultProfile, email: fallbackEmail, ...JSON.parse(cached) };
+    }
+  } catch (e) {
+    console.error('AsyncStorage profile load error:', e);
+  }
+
+  return profile;
+}
+
+export async function saveProfile(userId, profile) {
+  // 1. Save locally
+  try {
+    const key = userId ? `${PROFILE_KEY}_${userId}` : PROFILE_KEY;
+    await AsyncStorage.setItem(key, JSON.stringify(profile));
+  } catch (e) {
+    console.error('Local profile save error:', e);
+  }
+
+  // 2. Sync to Supabase
+  if (userId) {
+    const payload = {
+      id: userId,
+      email: profile.email,
+      full_name: profile.fullName,
+      phone: profile.phone,
+      headline: profile.headline,
+      portfolio: profile.portfolio,
+      linkedin: profile.linkedin,
+      github: profile.github,
+      location: profile.location,
+      bio: profile.bio,
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      await supabase.from('users').upsert(payload, { onConflict: 'id' });
+    } catch (err) {
+      console.warn('Sync profile to users table warning:', err);
+    }
+
+    try {
+      await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+    } catch (err) {
+      console.warn('Sync profile to profiles table warning:', err);
+    }
+
+    try {
+      await supabase.auth.updateUser({
+        data: { full_name: profile.fullName },
+      });
+    } catch (authErr) {
+      // ignore
+    }
+  }
+
+  return true;
+}
 
 // --------------------------------------------------------
 // USER SETTINGS & APIS

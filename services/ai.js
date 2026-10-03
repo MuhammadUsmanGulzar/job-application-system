@@ -47,6 +47,7 @@ export async function generateJobApplication({
   description,
   resumeContent,
   resumeName,
+  candidateProfile,
   apiKey,
   model = 'gpt-4o-mini',
   provider = 'OpenAI',
@@ -54,6 +55,17 @@ export async function generateJobApplication({
   if (!apiKey) {
     throw new Error('Please enter your LLM API Key in Settings first.');
   }
+
+  const candidateInfo = [
+    candidateProfile?.fullName ? `- Candidate Name: ${candidateProfile.fullName}` : '',
+    candidateProfile?.headline ? `- Professional Headline: ${candidateProfile.headline}` : '',
+    candidateProfile?.email ? `- Email: ${candidateProfile.email}` : '',
+    candidateProfile?.phone ? `- Phone Number: ${candidateProfile.phone}` : '',
+    candidateProfile?.portfolio ? `- Portfolio / Website: ${candidateProfile.portfolio}` : '',
+    candidateProfile?.linkedin ? `- LinkedIn Profile: ${candidateProfile.linkedin}` : '',
+    candidateProfile?.github ? `- GitHub Profile: ${candidateProfile.github}` : '',
+    candidateProfile?.location ? `- Location: ${candidateProfile.location}` : '',
+  ].filter(Boolean).join('\n');
 
   const prompt = `You are a professional career coach and executive copywriter. Write a highly persuasive, tailored, and professional job application email/cover letter.
 
@@ -64,19 +76,23 @@ JOB DETAILS:
 - Requirements: ${requirements || 'N/A'}
 - Description: ${description || 'N/A'}
 
+CANDIDATE CONTACT DETAILS & LINKS (ESSENTIAL FOR EMAIL SIGN-OFF):
+${candidateInfo || '- Candidate Name: ' + (candidateProfile?.fullName || 'Candidate')}
+
 CANDIDATE RESUME / BACKGROUND:
 ${resumeContent ? resumeContent : 'Candidate with strong engineering and analytical experience.'}
 
 INSTRUCTIONS:
-1. Write a compelling Subject line for the email.
+1. Write a compelling, high-converting Subject line for the email.
 2. Address the hiring manager or recruiter professionally.
 3. Highlight the candidate's exact strengths and how they map to the job's requirements.
 4. Keep the tone confident, articulate, and concise (not overly verbose).
 5. Include a clear call to action proposing a quick introductory chat or interview.
-6. Format the output clearly with:
+6. Crucial: In the closing email signature, use the candidate's real name and include their provided contact details (Phone, Portfolio, LinkedIn, GitHub) cleanly. NEVER output placeholder brackets like [Your Phone Number] or [LinkedIn Profile] if real details are provided above.
+7. Format the output clearly with:
    Subject: [Your Subject Line]
 
-   [Body of the email]
+   [Body of the email and candidate signature]
 `;
 
   if (provider === 'OpenAI' || !provider) {

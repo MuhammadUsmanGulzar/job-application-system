@@ -16,14 +16,24 @@ CREATE TABLE IF NOT EXISTS public.users (
     full_name TEXT,
     headline TEXT,
     phone TEXT,
+    portfolio TEXT,
+    linkedin TEXT,
+    github TEXT,
+    location TEXT,
+    bio TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Ensure full_name exists and relax legacy password_hash constraint if table pre-existed
+-- Ensure full_name & profile fields exist and relax legacy password_hash constraint if table pre-existed
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS full_name TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS headline TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS portfolio TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS linkedin TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS github TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS bio TEXT;
 
 DO $$
 BEGIN
@@ -42,9 +52,23 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     full_name TEXT,
     headline TEXT,
     phone TEXT,
+    portfolio TEXT,
+    linkedin TEXT,
+    github TEXT,
+    location TEXT,
+    bio TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS headline TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS portfolio TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS linkedin TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS github TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS bio TEXT;
 
 -- Table: USER_SETTINGS
 CREATE TABLE IF NOT EXISTS public.user_settings (
