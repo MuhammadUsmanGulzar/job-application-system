@@ -21,7 +21,7 @@ import {
   saveProfile,
   defaultProfile
 } from './services/storage';
-import { generateJobApplication, LLM_PROVIDERS_CONFIG } from './services/ai';
+import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
 export default function AppWeb() {
@@ -160,7 +160,7 @@ export default function AppWeb() {
     }
     if (section === 'llm') {
       setIsSavingLlm(false);
-      setLlmFeedback(success ? '✓ LLM API Key saved!' : 'Failed to save');
+      setLlmFeedback(success ? '✓ AI model preferences saved!' : 'Failed to save');
       setTimeout(() => setLlmFeedback(''), 3000);
     }
     if (section === 'google') {
@@ -239,31 +239,20 @@ export default function AppWeb() {
         return;
       }
 
-      // 2. Prepare comprehensive payload including User ID from DB
+      // 2. Prepare payload with ONLY userID and form details
       const n8nWebhookUrl = 'https://n8n.flyinvict.com/webhook/8c9fe40a-79bb-49b7-9bdf-e9bba8bae6cc';
 
       const webhookPayload = {
+        userID: userId,
         user_id: userId,
-        user_email: userEmail,
+        jobTitle: jobTitle.trim(),
         job_title: jobTitle.trim(),
-        company_name: companyName.trim() || 'Hiring Company',
+        companyName: companyName.trim(),
+        company_name: companyName.trim(),
+        recipientEmail: recipientEmail.trim(),
         recipient_email: recipientEmail.trim(),
         requirements: requirements.trim(),
         description: description.trim(),
-        resume_name: settings.resumeName || '',
-        resume_content: settings.resumeContent || '',
-        llm_provider: settings.llmProvider || 'OpenAI',
-        llm_model: settings.llmModel || 'gpt-4o-mini',
-        google_sender_email: settings.googleSenderEmail || '',
-        candidate_name: profile.fullName || userEmail?.split('@')[0] || '',
-        phone: profile.phone || '',
-        portfolio: profile.portfolio || '',
-        linkedin: profile.linkedin || '',
-        github: profile.github || '',
-        headline: profile.headline || '',
-        location: profile.location || '',
-        candidate_profile: profile,
-        submitted_at: new Date().toISOString(),
       };
 
       // 3. Trigger the n8n webhook node & await generation
@@ -708,23 +697,6 @@ export default function AppWeb() {
         {/* ================= TAB 1: APPLY FOR JOB ================= */}
         {activeTab === 'apply' && (
           <View style={styles.pageContainer}>
-            {/* Quick API status alert if not configured */}
-            {!settings.llmApiKey ? (
-              <View style={styles.warningCard}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.warningTitle}>⚠️ LLM API Key Needed</Text>
-                  <Text style={styles.warningDesc}>
-                    Please configure your OpenAI or Gemini API key in the APIs & Resume settings tab to generate applications.
-                  </Text>
-                </View>
-                <TouchableOpacity 
-                  style={styles.quickActionBtn}
-                  onPress={() => setActiveTab('settings')}
-                >
-                  <Text style={styles.quickActionBtnText}>Go to Settings</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
 
             <View style={styles.splitLayout}>
               {/* Form Card */}
@@ -1218,14 +1190,25 @@ export default function AppWeb() {
 
             {/* Section 2: LLM API Configuration */}
             <View style={styles.webCard}>
-              <Text style={styles.sectionTitle}>2. LLM API (OpenAI / AI Engine)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={styles.sectionTitle}>2. AI Model & Backend Engine Preferences</Text>
+                <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>🔒 Processed on Backend</Text>
+                </View>
+              </View>
               <Text style={styles.cardDescription}>
-                Select your AI provider. The Model dropdown will automatically show only the supported models for that provider.
+                AI generation is executed securely on your backend workflow (n8n). Configure which provider and model your backend should prioritize.
               </Text>
+
+              <View style={{ backgroundColor: '#f8fafc', padding: 14, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 18 }}>
+                <Text style={{ fontSize: 13, color: '#334155', lineHeight: 20 }}>
+                  💡 <Text style={{ fontWeight: '700' }}>Architecture Notice:</Text> API keys and model prompts are kept safe on the backend. The frontend handles visual presentation, user inputs, and live generation status.
+                </Text>
+              </View>
 
               <View style={styles.formRow}>
                 <View style={[styles.formGroup, { flex: 1, marginRight: 14 }]}>
-                  <Text style={styles.label}>AI Provider</Text>
+                  <Text style={styles.label}>AI Provider Preference</Text>
                   <select
                     style={{
                       width: '100%',
@@ -1259,7 +1242,7 @@ export default function AppWeb() {
                 </View>
 
                 <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Supported Models ({settings.llmProvider})</Text>
+                  <Text style={styles.label}>Target Model ({settings.llmProvider})</Text>
                   <select
                     style={{
                       width: '100%',
@@ -1285,32 +1268,6 @@ export default function AppWeb() {
                 </View>
               </View>
 
-              <View style={styles.formGroup}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <Text style={styles.label}>{settings.llmProvider} API Key *</Text>
-                  {LLM_PROVIDERS_CONFIG[settings.llmProvider]?.helpUrl ? (
-                    <TouchableOpacity 
-                      onPress={() => window.open(LLM_PROVIDERS_CONFIG[settings.llmProvider].helpUrl, '_blank')}
-                    >
-                      <Text style={{ fontSize: 12, color: '#2563eb', fontWeight: '500' }}>
-                        🔗 Get {settings.llmProvider} Key ↗
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                <TextInput
-                  style={styles.webInput}
-                  placeholder={LLM_PROVIDERS_CONFIG[settings.llmProvider]?.placeholder || `Enter your ${settings.llmProvider} API Key`}
-                  value={settings.llmApiKey}
-                  onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
-                  secureTextEntry
-                  placeholderTextColor="#9ca3af"
-                />
-                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                  Stored securely in your local browser session.
-                </Text>
-              </View>
-
               <View style={styles.cardActionRow}>
                 <TouchableOpacity 
                   style={[styles.sectionSaveBtn, isSavingLlm && styles.disabledButton]}
@@ -1320,7 +1277,7 @@ export default function AppWeb() {
                   {isSavingLlm ? (
                     <ActivityIndicator color="#ffffff" size="small" />
                   ) : (
-                    <Text style={styles.sectionSaveBtnText}>💾 Save LLM API Configuration</Text>
+                    <Text style={styles.sectionSaveBtnText}>💾 Save AI Preferences</Text>
                   )}
                 </TouchableOpacity>
                 {llmFeedback ? <Text style={styles.sectionFeedbackText}>{llmFeedback}</Text> : null}

@@ -26,7 +26,7 @@ import {
   saveProfile,
   defaultProfile
 } from './services/storage';
-import { generateJobApplication, LLM_PROVIDERS_CONFIG } from './services/ai';
+import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
 export default function App() {
@@ -160,7 +160,7 @@ export default function App() {
     }
     if (section === 'llm') {
       setIsSavingLlm(false);
-      Alert.alert(success ? 'Saved' : 'Error', success ? 'LLM API Key & settings saved!' : 'Failed to save LLM settings.');
+      Alert.alert(success ? 'Saved' : 'Error', success ? 'AI model preferences saved!' : 'Failed to save preferences.');
     }
     if (section === 'google') {
       setIsSavingGoogle(false);
@@ -228,31 +228,20 @@ export default function App() {
         return;
       }
 
-      // 2. Prepare comprehensive payload including User ID from DB
+      // 2. Prepare payload with ONLY userID and form details
       const n8nWebhookUrl = 'https://n8n.flyinvict.com/webhook/8c9fe40a-79bb-49b7-9bdf-e9bba8bae6cc';
 
       const webhookPayload = {
+        userID: userId,
         user_id: userId,
-        user_email: userEmail,
+        jobTitle: jobTitle.trim(),
         job_title: jobTitle.trim(),
-        company_name: companyName.trim() || 'Hiring Company',
+        companyName: companyName.trim(),
+        company_name: companyName.trim(),
+        recipientEmail: recipientEmail.trim(),
         recipient_email: recipientEmail.trim(),
         requirements: requirements.trim(),
         description: description.trim(),
-        resume_name: settings.resumeName || '',
-        resume_content: settings.resumeContent || '',
-        llm_provider: settings.llmProvider || 'OpenAI',
-        llm_model: settings.llmModel || 'gpt-4o-mini',
-        google_sender_email: settings.googleSenderEmail || '',
-        candidate_name: profile.fullName || userEmail?.split('@')[0] || '',
-        phone: profile.phone || '',
-        portfolio: profile.portfolio || '',
-        linkedin: profile.linkedin || '',
-        github: profile.github || '',
-        headline: profile.headline || '',
-        location: profile.location || '',
-        candidate_profile: profile,
-        submitted_at: new Date().toISOString(),
       };
 
       // 3. Trigger the n8n webhook node & await generation
@@ -973,12 +962,19 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
-            {/* LLM API Card */}
+            {/* LLM / Backend AI Preferences */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>2. LLM Engine (OpenAI / Gemini / Groq)</Text>
-              <Text style={styles.subText}>Select a provider to see its supported models.</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={styles.cardTitle}>2. AI Engine Preferences</Text>
+                <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a' }}>🔒 Backend Engine</Text>
+                </View>
+              </View>
+              <Text style={styles.subText}>
+                AI generation runs on your backend workflow (n8n). The frontend handles visuals and inputs while LLM prompts and credentials remain safe on the backend.
+              </Text>
 
-              <Text style={styles.label}>AI Provider</Text>
+              <Text style={styles.label}>AI Provider Preference</Text>
               <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
                 {Object.keys(LLM_PROVIDERS_CONFIG).map((provKey) => {
                   const isSelected = (settings.llmProvider || 'OpenAI') === provKey;
@@ -1007,8 +1003,8 @@ export default function App() {
                 })}
               </View>
 
-              <Text style={styles.label}>Supported Models ({settings.llmProvider || 'OpenAI'})</Text>
-              <View style={{ gap: 6, marginBottom: 12 }}>
+              <Text style={styles.label}>Target Model ({settings.llmProvider || 'OpenAI'})</Text>
+              <View style={{ gap: 6, marginBottom: 16 }}>
                 {(LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI']?.models || []).map((m) => {
                   const isSelected = settings.llmModel === m.id;
                   return (
@@ -1028,24 +1024,15 @@ export default function App() {
                 })}
               </View>
 
-              <Text style={styles.label}>{settings.llmProvider || 'OpenAI'} API Key *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder={LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI']?.placeholder || 'sk-...'}
-                value={settings.llmApiKey}
-                onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
-                secureTextEntry
-              />
-
               <TouchableOpacity 
-                style={[styles.primaryBtn, isSavingLlm && styles.disabledBtn, { marginTop: 6 }]}
+                style={[styles.primaryBtn, isSavingLlm && styles.disabledBtn]}
                 onPress={() => handleSaveSection('llm')}
                 disabled={isSavingLlm}
               >
                 {isSavingLlm ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>💾 Save LLM API</Text>
+                  <Text style={styles.primaryBtnText}>💾 Save AI Preferences</Text>
                 )}
               </TouchableOpacity>
             </View>
