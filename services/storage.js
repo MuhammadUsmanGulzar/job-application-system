@@ -296,6 +296,108 @@ export async function getApplications(userId) {
   return [];
 }
 
+/**
+ * Creates and immediately saves the application record in the Supabase 'applications' table
+ * on button click.
+ */
+export async function createApplication(userId, formDetails) {
+  if (!userId) throw new Error('User ID is required to create application');
+
+  const payload = {
+    user_id: userId,
+    job_title: formDetails.jobTitle?.trim() || '',
+    company_name: formDetails.companyName?.trim() || 'Hiring Company',
+    recipient_email: formDetails.recipientEmail?.trim() || null,
+    requirements: formDetails.requirements?.trim() || null,
+    description: formDetails.description?.trim() || null,
+    status: formDetails.recipientEmail?.trim() ? 'Applied' : 'Draft',
+  };
+
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (!error && data) {
+      const created = {
+        id: data.id,
+        jobTitle: data.job_title,
+        companyName: data.company_name,
+        recipientEmail: data.recipient_email || '',
+        requirements: data.requirements || '',
+        description: data.description || '',
+        generatedEmail: data.generated_email || '',
+        status: data.status,
+        createdAt: data.created_at,
+      };
+
+      // Cache locally
+      const key = `${APPLICATIONS_KEY}_${userId}`;
+      const current = await getApplications(userId);
+      const updated = [created, ...current.filter(i => i.id !== created.id)];
+      await AsyncStorage.setItem(key, JSON.stringify(updated));
+
+      return { success: true, application: created, id: data.id };
+    }
+
+    if (error) {
+      console.warn('Supabase application insert warning:', error.message);
+    }
+  } catch (err) {
+    console.error('Error inserting into applications table:', err);
+  }
+
+  // Fallback locally if offline
+  const localId = Date.now().toString();
+  const fallback = {
+    id: localId,
+    jobTitle: formDetails.jobTitle?.trim() || '',
+    companyName: formDetails.companyName?.trim() || 'Hiring Company',
+    recipientEmail: formDetails.recipientEmail?.trim() || '',
+    requirements: formDetails.requirements?.trim() || '',
+    description: formDetails.description?.trim() || '',
+    status: formDetails.recipientEmail?.trim() ? 'Applied' : 'Draft',
+    createdAt: new Date().toISOString(),
+  };
+  const key = `${APPLICATIONS_KEY}_${userId}`;
+  const current = await getApplications(userId);
+  const updated = [fallback, ...current.filter(i => i.id !== localId)];
+  await AsyncStorage.setItem(key, JSON.stringify(updated));
+
+  return { success: true, application: fallback, id: localId };
+}
+
+/**
+ * Updates the generated_email field of an existing application record
+ */
+export async function updateApplicationGeneratedEmail(userId, applicationId, generatedEmail) {
+  if (!applicationId) return;
+
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+    if (isUuid && userId) {
+      await supabase
+        .from('applications')
+        .update({
+          generated_email: generatedEmail,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', applicationId)
+        .eq('user_id', userId);
+    }
+
+    // Update local cache
+    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const current = await getApplications(userId);
+    const updated = current.map(item => item.id === applicationId ? { ...item, generatedEmail } : item);
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('Error updating application generated email:', err);
+  }
+}
+
 export async function saveApplication(userId, application) {
   // 1. Update local storage
   const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
@@ -306,7 +408,6 @@ export async function saveApplication(userId, application) {
   // 2. Sync to Supabase
   if (userId) {
     try {
-      // Check if it's a UUID or timestamp ID
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(application.id);
       
       const payload = {
@@ -361,7 +462,7 @@ export async function deleteApplication(userId, applicationId) {
 // FETCH GENERATED EMAIL FROM application_emails TABLE
 // --------------------------------------------------------
 
-export async function fetchLatestApplicationEmail(userId, submittedAfter) {
+export async function fetchLatestApplicationEmail(userId, submittedAfter, applicationId) {
   if (!userId) return null;
 
   try {
@@ -373,7 +474,13 @@ export async function fetchLatestApplicationEmail(userId, submittedAfter) {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    if (submittedAfter) {
+    const isUuid = applicationId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+
+    if (isUuid && submittedAfter) {
+      query = query.or(`application_id.eq.${applicationId},created_at.gte.${submittedAfter}`);
+    } else if (isUuid) {
+      query = query.eq('application_id', applicationId);
+    } else if (submittedAfter) {
       query = query.gte('created_at', submittedAfter);
     }
 
@@ -387,7 +494,11 @@ export async function fetchLatestApplicationEmail(userId, submittedAfter) {
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(1);
-      if (submittedAfter) {
+      if (isUuid && submittedAfter) {
+        altQuery = altQuery.or(`application_id.eq.${applicationId},created_at.gte.${submittedAfter}`);
+      } else if (isUuid) {
+        altQuery = altQuery.eq('application_id', applicationId);
+      } else if (submittedAfter) {
         altQuery = altQuery.gte('created_at', submittedAfter);
       }
       const altRes = await altQuery;

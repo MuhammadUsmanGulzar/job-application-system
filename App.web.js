@@ -20,7 +20,9 @@ import {
   getProfile,
   saveProfile,
   defaultProfile,
-  fetchLatestApplicationEmail
+  fetchLatestApplicationEmail,
+  createApplication,
+  updateApplicationGeneratedEmail
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
@@ -221,7 +223,7 @@ export default function AppWeb() {
     }
   };
 
-  // Submit Application, Start Timer/Loader, Trigger n8n & Poll application_emails table
+  // Submit Application, Immediately Save to 'applications' table, Start Timer/Loader & Trigger n8n
   const handleGenerateAndApply = async () => {
     if (!jobTitle.trim()) {
       window.alert('Please enter a Job Title.');
@@ -240,7 +242,28 @@ export default function AppWeb() {
       return;
     }
 
-    // 2. Start timer & loader immediately
+    // 2. IMMEDIATELY SAVE FORM DETAILS IN TABLE 'applications' ON BUTTON CLICK
+    let createdApp = null;
+    let createdAppId = null;
+    try {
+      const result = await createApplication(userId, {
+        jobTitle: jobTitle.trim(),
+        companyName: companyName.trim(),
+        recipientEmail: recipientEmail.trim(),
+        requirements: requirements.trim(),
+        description: description.trim(),
+      });
+      createdApp = result.application;
+      createdAppId = result.id;
+
+      // Instantly refresh applications state so it appears in history right away
+      const refreshedList = await getApplications(userId);
+      setApplications(refreshedList);
+    } catch (saveErr) {
+      console.warn('Initial application save warning:', saveErr.message);
+    }
+
+    // 3. Start timer & loader immediately
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
@@ -253,12 +276,14 @@ export default function AppWeb() {
     // Record submission time (buffered 5 seconds for server clock drift)
     const submitTime = new Date(Date.now() - 5000).toISOString();
 
-    // 3. Prepare payload with ONLY userID and form details
+    // 4. Prepare payload with ONLY userID, applicationID and form details
     const n8nWebhookUrl = 'https://n8n.flyinvict.com/webhook/8c9fe40a-79bb-49b7-9bdf-e9bba8bae6cc';
 
     const webhookPayload = {
       userID: userId,
       user_id: userId,
+      applicationID: createdAppId,
+      application_id: createdAppId,
       jobTitle: jobTitle.trim(),
       job_title: jobTitle.trim(),
       companyName: companyName.trim(),
@@ -271,7 +296,7 @@ export default function AppWeb() {
 
     let directWebhookContent = '';
 
-    // 4. Trigger the n8n webhook asynchronously
+    // 5. Trigger the n8n webhook asynchronously
     fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: {
@@ -302,7 +327,7 @@ export default function AppWeb() {
         console.warn('n8n Webhook trigger note:', wbErr.message);
       });
 
-    // 5. Poll application_emails table in Supabase
+    // 6. Poll application_emails table in Supabase
     const pollStartTime = Date.now();
     const maxPollTimeMs = 120000; // 2 minutes
 
@@ -313,8 +338,13 @@ export default function AppWeb() {
       }
       setIsGenerating(false);
 
-      const newApp = {
-        id: Date.now().toString(),
+      // Update the record in 'applications' table with the generated email
+      if (createdAppId) {
+        await updateApplicationGeneratedEmail(userId, createdAppId, generatedContent);
+      }
+
+      const finalApp = {
+        id: createdAppId || Date.now().toString(),
         jobTitle: jobTitle.trim(),
         companyName: companyName.trim() || 'Hiring Company',
         recipientEmail: recipientEmail.trim(),
@@ -322,17 +352,17 @@ export default function AppWeb() {
         description: description.trim(),
         generatedEmail: generatedContent,
         status: recipientEmail.trim() ? 'Applied' : 'Generated',
-        createdAt: new Date().toISOString(),
+        createdAt: createdApp?.createdAt || new Date().toISOString(),
       };
 
-      const updatedList = await saveApplication(userId, newApp);
-      if (updatedList) setApplications(updatedList);
-      setGeneratedResult(newApp);
+      const refreshedList = await getApplications(userId);
+      setApplications(refreshedList);
+      setGeneratedResult(finalApp);
     };
 
     pollIntervalRef.current = setInterval(async () => {
       // Check application_emails table in Supabase
-      const emailRecord = await fetchLatestApplicationEmail(userId, submitTime);
+      const emailRecord = await fetchLatestApplicationEmail(userId, submitTime, createdAppId);
       if (emailRecord && emailRecord.fullEmail) {
         await onEmailFound(emailRecord.fullEmail);
         return;
@@ -352,7 +382,7 @@ export default function AppWeb() {
         }
         setIsGenerating(false);
         window.alert(
-          'Email generation timed out waiting for output in application_emails table. If your workflow is still processing, please check History in a moment.'
+          'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.'
         );
       }
     }, 2000);
