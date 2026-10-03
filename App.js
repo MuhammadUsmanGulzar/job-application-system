@@ -10,7 +10,8 @@ import {
   ActivityIndicator,
   Modal,
   SafeAreaView,
-  StatusBar
+  StatusBar,
+  Linking
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from './supabase';
@@ -44,6 +45,8 @@ export default function App() {
     resumeContent: '',
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [showGmailGuide, setShowGmailGuide] = useState(true);
+  const [guideMethod, setGuideMethod] = useState('appPassword');
 
   // Job Application Form State
   const [jobTitle, setJobTitle] = useState('');
@@ -602,8 +605,86 @@ export default function App() {
 
             {/* Google Console API */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>3. Google Console / Gmail Account</Text>
-              <Text style={styles.subText}>Account from which emails are sent.</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={styles.cardTitle}>3. Gmail Account & Setup</Text>
+                <TouchableOpacity 
+                  style={styles.guideToggleBtn}
+                  onPress={() => setShowGmailGuide(!showGmailGuide)}
+                >
+                  <Text style={styles.guideToggleBtnText}>
+                    {showGmailGuide ? '▲ Hide Guide' : '📖 Guide'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.subText}>Connect your account to send applications directly to recruiters.</Text>
+
+              {/* Mobile Guide */}
+              {showGmailGuide && (
+                <View style={styles.mobileGuideBox}>
+                  <View style={styles.mobileGuideTabs}>
+                    <TouchableOpacity 
+                      style={[styles.mobileGuideTab, guideMethod === 'appPassword' && styles.mobileGuideTabActive]}
+                      onPress={() => setGuideMethod('appPassword')}
+                    >
+                      <Text style={[styles.mobileGuideTabText, guideMethod === 'appPassword' && styles.mobileGuideTabTextActive]}>
+                        ⚡ App Password (2 min)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[styles.mobileGuideTab, guideMethod === 'oauth' && styles.mobileGuideTabActive]}
+                      onPress={() => setGuideMethod('oauth')}
+                    >
+                      <Text style={[styles.mobileGuideTabText, guideMethod === 'oauth' && styles.mobileGuideTabTextActive]}>
+                        🏢 Cloud OAuth 2.0
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {guideMethod === 'appPassword' ? (
+                    <View style={{ gap: 10 }}>
+                      <Text style={styles.guideStepText}>
+                        <Text style={{ fontWeight: '700' }}>1. Enable 2-Step Verification:</Text> Turn it on in your Google Account security.
+                      </Text>
+                      <TouchableOpacity 
+                        style={styles.linkButtonMobile}
+                        onPress={() => Linking.openURL('https://myaccount.google.com/security')}
+                      >
+                        <Text style={styles.linkButtonMobileText}>🔗 Open Google Security ↗</Text>
+                      </TouchableOpacity>
+
+                      <Text style={styles.guideStepText}>
+                        <Text style={{ fontWeight: '700' }}>2. Generate App Password:</Text> Name it "Job Apply Pro" and copy the 16-letter code.
+                      </Text>
+                      <TouchableOpacity 
+                        style={styles.linkButtonMobile}
+                        onPress={() => Linking.openURL('https://myaccount.google.com/apppasswords')}
+                      >
+                        <Text style={styles.linkButtonMobileText}>🔗 Go to App Passwords ↗</Text>
+                      </TouchableOpacity>
+
+                      <Text style={styles.guideStepText}>
+                        <Text style={{ fontWeight: '700' }}>3. Paste Below:</Text> Enter your Gmail and paste the 16-letter code into App Password.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 10 }}>
+                      <Text style={styles.guideStepText}>
+                        <Text style={{ fontWeight: '700' }}>1. Google Cloud:</Text> Create a project and enable the <Text style={{ fontWeight: '700' }}>Gmail API</Text>.
+                      </Text>
+                      <TouchableOpacity 
+                        style={styles.linkButtonMobile}
+                        onPress={() => Linking.openURL('https://console.cloud.google.com')}
+                      >
+                        <Text style={styles.linkButtonMobileText}>🔗 Open Google Cloud Console ↗</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.guideStepText}>
+                        <Text style={{ fontWeight: '700' }}>2. OAuth Client ID:</Text> Create Web Application credentials with scope <Text style={{ fontFamily: 'monospace' }}>https://www.googleapis.com/auth/gmail.send</Text> and paste keys below.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
 
               <Text style={styles.label}>Sender Gmail Address</Text>
               <TextInput
@@ -615,7 +696,7 @@ export default function App() {
                 autoCapitalize="none"
               />
 
-              <Text style={styles.label}>Google Console Client ID</Text>
+              <Text style={styles.label}>Google Console Client ID (Optional for App Password)</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Client ID from Google Cloud"
@@ -623,7 +704,7 @@ export default function App() {
                 onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientId: val }))}
               />
 
-              <Text style={styles.label}>Google Client Secret / App Password</Text>
+              <Text style={styles.label}>Google Client Secret OR 16-Char App Password *</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Secret or App Password"
@@ -978,5 +1059,73 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#0f172a',
+  },
+  // Mobile guide styles
+  guideToggleBtn: {
+    backgroundColor: '#eff6ff',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  guideToggleBtnText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mobileGuideBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 14,
+  },
+  mobileGuideTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    paddingBottom: 8,
+  },
+  mobileGuideTab: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  mobileGuideTabActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  mobileGuideTabText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  mobileGuideTabTextActive: {
+    color: '#ffffff',
+  },
+  guideStepText: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 18,
+  },
+  linkButtonMobile: {
+    backgroundColor: '#eff6ff',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 4,
+  },
+  linkButtonMobileText: {
+    color: '#2563eb',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

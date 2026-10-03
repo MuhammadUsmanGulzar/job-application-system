@@ -41,6 +41,8 @@ export default function AppWeb() {
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState('');
+  const [showGmailGuide, setShowGmailGuide] = useState(true);
+  const [guideMethod, setGuideMethod] = useState('appPassword');
 
   // Job Application Form State
   const [jobTitle, setJobTitle] = useState('');
@@ -817,10 +819,155 @@ export default function AppWeb() {
 
             {/* Section 3: Google Console / Gmail API */}
             <View style={styles.webCard}>
-              <Text style={styles.sectionTitle}>3. Google Console API & Gmail Account</Text>
-              <Text style={styles.cardDescription}>
-                Configure the sender Google account from which emails will be dispatched to recruiters.
-              </Text>
+              <View style={styles.sectionHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitle}>3. Google Console API & Gmail Account</Text>
+                  <Text style={styles.cardDescription}>
+                    Connect your Gmail to send application emails directly to recruiters.
+                  </Text>
+                </View>
+                <TouchableOpacity 
+                  style={styles.guideToggleBtn}
+                  onPress={() => setShowGmailGuide(!showGmailGuide)}
+                >
+                  <Text style={styles.guideToggleBtnText}>
+                    {showGmailGuide ? '▲ Hide Guide' : '📖 How to Connect (Guide)'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Interactive Visual Guide */}
+              {showGmailGuide && (
+                <View style={styles.guideBox}>
+                  <View style={styles.guideTabBar}>
+                    <TouchableOpacity 
+                      style={[styles.guideTabItem, guideMethod === 'appPassword' && styles.guideTabItemActive]}
+                      onPress={() => setGuideMethod('appPassword')}
+                    >
+                      <Text style={[styles.guideTabItemText, guideMethod === 'appPassword' && styles.guideTabItemTextActive]}>
+                        ⚡ Method A: Gmail App Password (2 Mins - Recommended)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[styles.guideTabItem, guideMethod === 'oauth' && styles.guideTabItemActive]}
+                      onPress={() => setGuideMethod('oauth')}
+                    >
+                      <Text style={[styles.guideTabItemText, guideMethod === 'oauth' && styles.guideTabItemTextActive]}>
+                        🏢 Method B: Google Cloud Console OAuth 2.0
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {guideMethod === 'appPassword' ? (
+                    <View style={styles.guideContent}>
+                      <Text style={styles.guideLead}>
+                        The fastest & most reliable method. Takes 2 minutes and allows sending application emails directly from your Gmail:
+                      </Text>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>1</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>Turn on 2-Step Verification</Text>
+                          <Text style={styles.stepDesc}>
+                            Make sure 2-Step Verification is active on your Google Account.
+                          </Text>
+                          <TouchableOpacity 
+                            style={styles.linkPill}
+                            onPress={() => window.open('https://myaccount.google.com/security', '_blank')}
+                          >
+                            <Text style={styles.linkPillText}>🔗 Open Google Security Settings ↗</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>2</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>Generate App Password</Text>
+                          <Text style={styles.stepDesc}>
+                            Visit the Google App Passwords page. Name it <Text style={{ fontWeight: '700' }}>"Job Apply Pro"</Text> and click <Text style={{ fontWeight: '700' }}>Create</Text>.
+                          </Text>
+                          <TouchableOpacity 
+                            style={styles.linkPill}
+                            onPress={() => window.open('https://myaccount.google.com/apppasswords', '_blank')}
+                          >
+                            <Text style={styles.linkPillText}>🔗 Go to Google App Passwords ↗</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>3</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>Paste Below & Save</Text>
+                          <Text style={styles.stepDesc}>
+                            Copy the 16-character code (e.g. <Text style={{ fontFamily: 'monospace' }}>abcd efgh ijkl mnop</Text>) into the <Text style={{ fontWeight: '700' }}>"Client Secret / App Password"</Text> field below, and enter your Gmail address!
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.guideContent}>
+                      <Text style={styles.guideLead}>
+                        For advanced/cloud users using Google Cloud OAuth 2.0 Client credentials:
+                      </Text>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>1</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>Create Project in Google Cloud</Text>
+                          <Text style={styles.stepDesc}>
+                            Go to Google Cloud Console and create a project named <Text style={{ fontWeight: '700' }}>"Job Apply System"</Text>.
+                          </Text>
+                          <TouchableOpacity 
+                            style={styles.linkPill}
+                            onPress={() => window.open('https://console.cloud.google.com/projectcreate', '_blank')}
+                          >
+                            <Text style={styles.linkPillText}>🔗 Open Google Cloud Console ↗</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>2</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>Enable Gmail API</Text>
+                          <Text style={styles.stepDesc}>
+                            Under <Text style={{ fontWeight: '700' }}>APIs & Services > Library</Text>, search for <Text style={{ fontWeight: '700' }}>"Gmail API"</Text> and click <Text style={{ fontWeight: '700' }}>Enable</Text>.
+                          </Text>
+                          <TouchableOpacity 
+                            style={styles.linkPill}
+                            onPress={() => window.open('https://console.cloud.google.com/apis/library/gmail.googleapis.com', '_blank')}
+                          >
+                            <Text style={styles.linkPillText}>🔗 Enable Gmail API ↗</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>3</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>OAuth Consent & Scope</Text>
+                          <Text style={styles.stepDesc}>
+                            Set up OAuth consent screen with user type <Text style={{ fontWeight: '700' }}>External</Text> and add the scope <Text style={{ fontFamily: 'monospace' }}>https://www.googleapis.com/auth/gmail.send</Text>.
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.guideStepRow}>
+                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>4</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.stepTitle}>Create Credentials</Text>
+                          <Text style={styles.stepDesc}>
+                            Under <Text style={{ fontWeight: '700' }}>Credentials</Text>, create an <Text style={{ fontWeight: '700' }}>OAuth client ID (Web Application)</Text>, and copy your Client ID & Client Secret below.
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
 
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Sender Gmail Address</Text>
@@ -837,7 +984,7 @@ export default function AppWeb() {
 
               <View style={styles.formRow}>
                 <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
-                  <Text style={styles.label}>Google Console Client ID</Text>
+                  <Text style={styles.label}>Google Console Client ID (Optional for App Password)</Text>
                   <TextInput
                     style={styles.webInput}
                     placeholder="xxxx-xxxx.apps.googleusercontent.com"
@@ -848,10 +995,10 @@ export default function AppWeb() {
                 </View>
 
                 <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Google Console Client Secret / App Password</Text>
+                  <Text style={styles.label}>Google Client Secret OR 16-Char App Password *</Text>
                   <TextInput
                     style={styles.webInput}
-                    placeholder="Client Secret or 16-character App Password"
+                    placeholder="16-character App Password or Client Secret"
                     value={settings.googleClientSecret}
                     onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientSecret: val }))}
                     secureTextEntry
@@ -1480,6 +1627,109 @@ const styles = StyleSheet.create({
   },
   providerPillTextActive: {
     color: '#2563eb',
+  },
+
+  // Guide styles
+  guideToggleBtn: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  guideToggleBtnText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  guideBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 20,
+    marginBottom: 20,
+  },
+  guideTabBar: {
+    flexDirection: 'row',
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    paddingBottom: 12,
+    marginBottom: 16,
+  },
+  guideTabItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  guideTabItemActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  guideTabItemText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  guideTabItemTextActive: {
+    color: '#ffffff',
+  },
+  guideContent: {
+    gap: 14,
+  },
+  guideLead: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  guideStepRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+  },
+  stepBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#2563eb',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  stepBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  stepTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  stepDesc: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  linkPill: {
+    backgroundColor: '#eff6ff',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  linkPillText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '600',
   },
 
   // Modal
