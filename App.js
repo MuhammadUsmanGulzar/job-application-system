@@ -44,7 +44,9 @@ export default function App() {
     resumeName: '',
     resumeContent: '',
   });
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isSavingResume, setIsSavingResume] = useState(false);
+  const [isSavingLlm, setIsSavingLlm] = useState(false);
+  const [isSavingGoogle, setIsSavingGoogle] = useState(false);
   const [showGmailGuide, setShowGmailGuide] = useState(true);
   const [guideMethod, setGuideMethod] = useState('appPassword');
 
@@ -89,14 +91,24 @@ export default function App() {
     setApplications(userApps);
   };
 
-  const handleSaveSettings = async () => {
-    setIsSavingSettings(true);
+  const handleSaveSection = async (section) => {
+    if (section === 'resume') setIsSavingResume(true);
+    if (section === 'llm') setIsSavingLlm(true);
+    if (section === 'google') setIsSavingGoogle(true);
+
     const success = await saveSettings(session?.user?.id, settings);
-    setIsSavingSettings(false);
-    if (success) {
-      Alert.alert('Saved', 'Your settings and API keys have been saved!');
-    } else {
-      Alert.alert('Error', 'Failed to save settings.');
+
+    if (section === 'resume') {
+      setIsSavingResume(false);
+      Alert.alert(success ? 'Saved' : 'Error', success ? 'Resume saved successfully!' : 'Failed to save resume.');
+    }
+    if (section === 'llm') {
+      setIsSavingLlm(false);
+      Alert.alert(success ? 'Saved' : 'Error', success ? 'LLM API Key & settings saved!' : 'Failed to save LLM settings.');
+    }
+    if (section === 'google') {
+      setIsSavingGoogle(false);
+      Alert.alert(success ? 'Saved' : 'Error', success ? 'Gmail & Google credentials saved!' : 'Failed to save credentials.');
     }
   };
 
@@ -571,6 +583,18 @@ export default function App() {
                 onChangeText={(text) => setSettings(prev => ({ ...prev, resumeContent: text }))}
                 multiline
               />
+
+              <TouchableOpacity 
+                style={[styles.primaryBtn, isSavingResume && styles.disabledBtn, { marginTop: 6 }]}
+                onPress={() => handleSaveSection('resume')}
+                disabled={isSavingResume}
+              >
+                {isSavingResume ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryBtnText}>💾 Save Resume</Text>
+                )}
+              </TouchableOpacity>
             </View>
 
             {/* LLM API Card */}
@@ -601,6 +625,18 @@ export default function App() {
                 onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
                 secureTextEntry
               />
+
+              <TouchableOpacity 
+                style={[styles.primaryBtn, isSavingLlm && styles.disabledBtn, { marginTop: 6 }]}
+                onPress={() => handleSaveSection('llm')}
+                disabled={isSavingLlm}
+              >
+                {isSavingLlm ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryBtnText}>💾 Save LLM API</Text>
+                )}
+              </TouchableOpacity>
             </View>
 
             {/* Google Console API */}
@@ -712,19 +748,19 @@ export default function App() {
                 onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientSecret: val }))}
                 secureTextEntry
               />
-            </View>
 
-            <TouchableOpacity 
-              style={[styles.primaryBtn, isSavingSettings && styles.disabledBtn, { marginHorizontal: 16 }]}
-              onPress={handleSaveSettings}
-              disabled={isSavingSettings}
-            >
-              {isSavingSettings ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryBtnText}>💾 Save All Settings</Text>
-              )}
-            </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.primaryBtn, isSavingGoogle && styles.disabledBtn, { marginTop: 6 }]}
+                onPress={() => handleSaveSection('google')}
+                disabled={isSavingGoogle}
+              >
+                {isSavingGoogle ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryBtnText}>💾 Save Gmail & Google API</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </ScrollView>

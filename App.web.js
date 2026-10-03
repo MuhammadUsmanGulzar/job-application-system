@@ -39,8 +39,14 @@ export default function AppWeb() {
     resumeName: '',
     resumeContent: '',
   });
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [settingsFeedback, setSettingsFeedback] = useState('');
+  const [isSavingResume, setIsSavingResume] = useState(false);
+  const [isSavingLlm, setIsSavingLlm] = useState(false);
+  const [isSavingGoogle, setIsSavingGoogle] = useState(false);
+
+  const [resumeFeedback, setResumeFeedback] = useState('');
+  const [llmFeedback, setLlmFeedback] = useState('');
+  const [googleFeedback, setGoogleFeedback] = useState('');
+
   const [showGmailGuide, setShowGmailGuide] = useState(true);
   const [guideMethod, setGuideMethod] = useState('appPassword');
 
@@ -86,15 +92,27 @@ export default function AppWeb() {
     setApplications(userApps);
   };
 
-  const handleSaveSettings = async () => {
-    setIsSavingSettings(true);
+  const handleSaveSection = async (section) => {
+    if (section === 'resume') setIsSavingResume(true);
+    if (section === 'llm') setIsSavingLlm(true);
+    if (section === 'google') setIsSavingGoogle(true);
+
     const success = await saveSettings(session?.user?.id, settings);
-    setIsSavingSettings(false);
-    if (success) {
-      setSettingsFeedback('Settings saved successfully!');
-      setTimeout(() => setSettingsFeedback(''), 3000);
-    } else {
-      window.alert('Failed to save settings.');
+
+    if (section === 'resume') {
+      setIsSavingResume(false);
+      setResumeFeedback(success ? '✓ Resume saved successfully!' : 'Failed to save');
+      setTimeout(() => setResumeFeedback(''), 3000);
+    }
+    if (section === 'llm') {
+      setIsSavingLlm(false);
+      setLlmFeedback(success ? '✓ LLM API Key saved!' : 'Failed to save');
+      setTimeout(() => setLlmFeedback(''), 3000);
+    }
+    if (section === 'google') {
+      setIsSavingGoogle(false);
+      setGoogleFeedback(success ? '✓ Gmail credentials saved!' : 'Failed to save');
+      setTimeout(() => setGoogleFeedback(''), 3000);
     }
   };
 
@@ -756,6 +774,21 @@ export default function AppWeb() {
                   placeholderTextColor="#9ca3af"
                 />
               </View>
+
+              <View style={styles.cardActionRow}>
+                <TouchableOpacity 
+                  style={[styles.sectionSaveBtn, isSavingResume && styles.disabledButton]}
+                  onPress={() => handleSaveSection('resume')}
+                  disabled={isSavingResume}
+                >
+                  {isSavingResume ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={styles.sectionSaveBtnText}>💾 Save Resume</Text>
+                  )}
+                </TouchableOpacity>
+                {resumeFeedback ? <Text style={styles.sectionFeedbackText}>{resumeFeedback}</Text> : null}
+              </View>
             </View>
 
             {/* Section 2: LLM API Configuration */}
@@ -814,6 +847,21 @@ export default function AppWeb() {
                 <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
                   Stored securely in your local browser session.
                 </Text>
+              </View>
+
+              <View style={styles.cardActionRow}>
+                <TouchableOpacity 
+                  style={[styles.sectionSaveBtn, isSavingLlm && styles.disabledButton]}
+                  onPress={() => handleSaveSection('llm')}
+                  disabled={isSavingLlm}
+                >
+                  {isSavingLlm ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={styles.sectionSaveBtnText}>💾 Save LLM API Configuration</Text>
+                  )}
+                </TouchableOpacity>
+                {llmFeedback ? <Text style={styles.sectionFeedbackText}>{llmFeedback}</Text> : null}
               </View>
             </View>
 
@@ -1006,19 +1054,22 @@ export default function AppWeb() {
                   />
                 </View>
               </View>
-            </View>
 
-            <TouchableOpacity 
-              style={[styles.webPrimaryButton, { width: 240, alignSelf: 'flex-start' }, isSavingSettings && styles.disabledButton]}
-              onPress={handleSaveSettings}
-              disabled={isSavingSettings}
-            >
-              {isSavingSettings ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.webPrimaryButtonText}>💾 Save All Settings</Text>
-              )}
-            </TouchableOpacity>
+              <View style={styles.cardActionRow}>
+                <TouchableOpacity 
+                  style={[styles.sectionSaveBtn, isSavingGoogle && styles.disabledButton]}
+                  onPress={() => handleSaveSection('google')}
+                  disabled={isSavingGoogle}
+                >
+                  {isSavingGoogle ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={styles.sectionSaveBtnText}>💾 Save Gmail & Google API</Text>
+                  )}
+                </TouchableOpacity>
+                {googleFeedback ? <Text style={styles.sectionFeedbackText}>{googleFeedback}</Text> : null}
+              </View>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -1729,6 +1780,31 @@ const styles = StyleSheet.create({
   linkPillText: {
     color: '#2563eb',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  cardActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginTop: 8,
+  },
+  sectionSaveBtn: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
+  sectionSaveBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  sectionFeedbackText: {
+    color: '#059669',
+    fontSize: 13,
     fontWeight: '600',
   },
 
