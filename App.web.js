@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator
 } from 'react-native';
+import { supabase } from './supabase';
 
 export default function AppWeb() {
   // Auth state
@@ -16,6 +17,19 @@ export default function AppWeb() {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [session, setSession] = useState(null);
+
+  React.useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsAuthenticated(!!session);
+    });
+
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setIsAuthenticated(!!session);
+    });
+  }, []);
 
   // User settings state
   const [webhookUrl, setWebhookUrl] = useState('');
@@ -28,8 +42,8 @@ export default function AppWeb() {
   const [isLoading, setIsLoading] = useState(false);
 
   const currentUser = {
-    id: 'user-uuid-1234',
-    email: email || 'user@example.com'
+    id: session?.user?.id || 'user-uuid-1234',
+    email: session?.user?.email || email || 'user@example.com'
   };
 
   const handleSaveWebhook = () => {
@@ -148,11 +162,19 @@ export default function AppWeb() {
 
             <TouchableOpacity 
               style={styles.webPrimaryButton}
-              onPress={() => {
-                if (email && password) {
-                  setIsAuthenticated(true);
-                } else {
+              onPress={async () => {
+                if (!email || !password) {
                   Alert.alert('Error', 'Please enter both email and password');
+                  return;
+                }
+                
+                if (isLoginMode) {
+                  const { error } = await supabase.auth.signInWithPassword({ email, password });
+                  if (error) Alert.alert('Login Error', error.message);
+                } else {
+                  const { error } = await supabase.auth.signUp({ email, password });
+                  if (error) Alert.alert('Signup Error', error.message);
+                  else Alert.alert('Success', 'Check your email for the confirmation link or try signing in if auto-confirm is enabled!');
                 }
               }}
             >
@@ -172,7 +194,7 @@ export default function AppWeb() {
         <Text style={styles.navbarBrand}>Job System Portal</Text>
         <View style={styles.navbarRight}>
           <Text style={styles.userEmail}>{currentUser.email}</Text>
-          <TouchableOpacity onPress={() => setIsAuthenticated(false)} style={styles.logoutButton}>
+          <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.logoutButton}>
             <Text style={styles.logoutText}>Sign Out</Text>
           </TouchableOpacity>
         </View>
