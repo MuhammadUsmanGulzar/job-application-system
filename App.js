@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -7,8 +7,16 @@ import {
   TouchableOpacity, 
   ScrollView, 
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal,
+  SafeAreaView,
+  StatusBar
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { supabase } from './supabase';
+import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication } from './services/storage';
+import { generateJobApplication } from './services/ai';
+import { sendEmail } from './services/email';
 
 export default function App() {
   // Auth state
@@ -16,94 +24,230 @@ export default function App() {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
 
-  // User settings state
-  const [webhookUrl, setWebhookUrl] = useState('');
-  
-  // Job application state
+  // Active Tab: 'apply' | 'history' | 'settings'
+  const [activeTab, setActiveTab] = useState('apply');
+
+  // User Settings & Integrations
+  const [settings, setSettings] = useState({
+    llmProvider: 'OpenAI',
+    llmApiKey: '',
+    llmModel: 'gpt-4o-mini',
+    googleSenderEmail: '',
+    googleClientId: '',
+    googleClientSecret: '',
+    resumeName: '',
+    resumeContent: '',
+  });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Job Application Form State
   const [jobTitle, setJobTitle] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
   const [requirements, setRequirements] = useState('');
   const [description, setDescription] = useState('');
-  
-  const [isLoading, setIsLoading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedResult, setGeneratedResult] = useState(null);
 
-  // In a real app, this would be loaded from your auth context / secure storage
-  const currentUser = {
-    id: 'user-uuid-1234',
-    email: email || 'user@example.com'
+  // History State
+  const [applications, setApplications] = useState([]);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+
+  // Supabase Auth listener
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsAuthenticated(!!session);
+      if (session?.user?.id) {
+        loadUserData(session.user.id);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setIsAuthenticated(!!session);
+      if (session?.user?.id) {
+        loadUserData(session.user.id);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const loadUserData = async (userId) => {
+    const userSettings = await getSettings(userId);
+    setSettings(userSettings);
+    const userApps = await getApplications(userId);
+    setApplications(userApps);
   };
 
-  const handleSaveWebhook = () => {
-    // Here you would save the webhook URL to your database for this user
-    if (!webhookUrl.startsWith('http')) {
-      Alert.alert('Invalid URL', 'Please enter a valid http/https URL.');
-      return;
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    const success = await saveSettings(session?.user?.id, settings);
+    setIsSavingSettings(false);
+    if (success) {
+      Alert.alert('Saved', 'Your settings and API keys have been saved!');
+    } else {
+      Alert.alert('Error', 'Failed to save settings.');
     }
-    Alert.alert('Success', 'Your API Webhook has been saved!');
   };
 
-  const handleSubmitApplication = async () => {
-    if (!webhookUrl) {
-      Alert.alert('Missing API', 'Please enter your n8n Webhook URL in the settings first.');
-      return;
-    }
-
-    if (!jobTitle || !requirements) {
-      Alert.alert('Missing Fields', 'Please fill in the Job Title and Requirements.');
-      return;
-    }
-
-    setIsLoading(true);
-
-    const payload = {
-      user_id: currentUser.id,
-      email: currentUser.email,
-      job_details: {
-        title: jobTitle,
-        requirements: requirements,
-        description: description,
-      },
-      submitted_at: new Date().toISOString(),
-    };
-
+  // Resume Upload (Mobile Document Picker)
+  const handleUploadResumeMobile = async () => {
     try {
-      // Send the data directly to the user's specific n8n webhook
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'text/plain', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
       });
 
-      if (response.ok) {
-        Alert.alert('Success!', 'Job application data sent to your n8n workflow.');
-        setJobTitle('');
-        setRequirements('');
-        setDescription('');
-      } else {
-        Alert.alert('Error', 'Failed to send data. Check your n8n webhook configuration.');
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const file = result.assets[0];
+        setSettings(prev => ({
+          ...prev,
+          resumeName: file.name,
+          resumeContent: prev.resumeContent || `[Uploaded file: ${file.name}]`,
+        }));
+        Alert.alert('Resume Selected', `Attached: ${file.name}`);
       }
-    } catch (error) {
-      Alert.alert('Network Error', 'Could not reach the webhook URL.');
-      console.error(error);
-    } finally {
-      setIsLoading(false);
+    } catch (e) {
+      Alert.alert('File Picker Error', e.message);
     }
   };
 
+  // Generate Application with AI
+  const handleGenerateAndApply = async () => {
+    if (!jobTitle.trim()) {
+      Alert.alert('Missing Field', 'Please enter a Job Title.');
+      return;
+    }
+
+    if (!settings.llmApiKey.trim()) {
+      Alert.alert('API Key Required', 'Please configure your OpenAI / LLM API Key in the Settings tab first.', [
+        { text: 'Go to Settings', onPress: () => setActiveTab('settings') },
+        { text: 'Cancel', style: 'cancel' }
+      ]);
+      return;
+    }
+
+    setIsGenerating(true);
+    setGeneratedResult(null);
+
+    try {
+      const content = await generateJobApplication({
+        jobTitle,
+        companyName,
+        recipientEmail,
+        requirements,
+        description,
+        resumeContent: settings.resumeContent,
+        resumeName: settings.resumeName,
+        apiKey: settings.llmApiKey,
+        model: settings.llmModel,
+        provider: settings.llmProvider,
+      });
+
+      const newApp = {
+        id: Date.now().toString(),
+        jobTitle: jobTitle.trim(),
+        companyName: companyName.trim() || 'Hiring Company',
+        recipientEmail: recipientEmail.trim(),
+        requirements: requirements.trim(),
+        description: description.trim(),
+        generatedEmail: content,
+        status: recipientEmail ? 'Generated' : 'Draft',
+        createdAt: new Date().toISOString(),
+      };
+
+      const updatedList = await saveApplication(session?.user?.id, newApp);
+      if (updatedList) setApplications(updatedList);
+      setGeneratedResult(newApp);
+    } catch (err) {
+      Alert.alert('AI Error', err.message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Send Email
+  const handleSendEmail = async (appRecord) => {
+    if (!appRecord?.recipientEmail) {
+      Alert.alert('Missing Recipient', 'Please enter a recipient email.');
+      return;
+    }
+
+    try {
+      await sendEmail({
+        to: appRecord.recipientEmail,
+        subject: `Application for ${appRecord.jobTitle} - ${session?.user?.email || 'Candidate'}`,
+        body: appRecord.generatedEmail,
+        senderEmail: settings.googleSenderEmail,
+        googleClientId: settings.googleClientId,
+        googleClientSecret: settings.googleClientSecret,
+      });
+
+      const updated = { ...appRecord, status: 'Applied' };
+      const updatedList = await saveApplication(session?.user?.id, updated);
+      if (updatedList) setApplications(updatedList);
+      if (generatedResult?.id === appRecord.id) setGeneratedResult(updated);
+      if (selectedRecord?.id === appRecord.id) setSelectedRecord(updated);
+    } catch (e) {
+      Alert.alert('Send Error', e.message);
+    }
+  };
+
+  // Delete Record
+  const handleDeleteRecord = async (id) => {
+    Alert.alert('Confirm Delete', 'Are you sure you want to delete this application record?', [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Delete', 
+        style: 'destructive',
+        onPress: async () => {
+          const updated = await deleteApplication(session?.user?.id, id);
+          if (updated) setApplications(updated);
+          if (selectedRecord?.id === id) setSelectedRecord(null);
+        }
+      }
+    ]);
+  };
+
+  // ---------------- AUTH SCREEN ----------------
   if (!isAuthenticated) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', padding: 20 }]}>
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, { textAlign: 'center', fontSize: 24, marginBottom: 20 }]}>
+      <SafeAreaView style={styles.authContainer}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.authHeaderMobile}>
+          <Text style={styles.authBadgeMobile}>JOB APPLY SYSTEM</Text>
+          <Text style={styles.authTitleMobile}>Career Automation</Text>
+          <Text style={styles.authSubMobile}>AI-powered job applications & tracking</Text>
+        </View>
+
+        <View style={styles.mobileCard}>
+          <Text style={styles.cardHeaderTitle}>
             {isLoginMode ? 'Welcome Back' : 'Create Account'}
           </Text>
-          
-          <Text style={styles.label}>Email</Text>
+
+          {authError ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{authError}</Text>
+            </View>
+          ) : null}
+
+          {authMessage ? (
+            <View style={styles.successBox}>
+              <Text style={styles.successText}>{authMessage}</Text>
+            </View>
+          ) : null}
+
+          <Text style={styles.label}>Email Address</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter your email"
+            placeholder="name@example.com"
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
@@ -113,188 +257,715 @@ export default function App() {
           <Text style={styles.label}>Password</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter your password"
+            placeholder="••••••••"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
           />
 
           <TouchableOpacity 
-            style={styles.primaryButton}
-            onPress={() => {
-              if (email && password) {
-                setIsAuthenticated(true);
-              } else {
-                Alert.alert('Error', 'Please enter both email and password');
+            style={[styles.primaryBtn, authLoading && styles.disabledBtn]}
+            disabled={authLoading}
+            onPress={async () => {
+              setAuthError('');
+              setAuthMessage('');
+
+              if (!email.trim() || !password.trim()) {
+                setAuthError('Please enter both email and password.');
+                return;
+              }
+
+              setAuthLoading(true);
+
+              try {
+                if (isLoginMode) {
+                  const { data, error } = await supabase.auth.signInWithPassword({
+                    email: email.trim(),
+                    password: password.trim(),
+                  });
+                  if (error) {
+                    setAuthError(error.message);
+                  } else if (data?.session) {
+                    setSession(data.session);
+                    setIsAuthenticated(true);
+                  }
+                } else {
+                  const { data, error } = await supabase.auth.signUp({
+                    email: email.trim(),
+                    password: password.trim(),
+                  });
+                  if (error) {
+                    setAuthError(error.message);
+                  } else if (data?.session) {
+                    setAuthMessage('Account created and signed in!');
+                    setSession(data.session);
+                    setIsAuthenticated(true);
+                  } else if (data?.user) {
+                    const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
+                      email: email.trim(),
+                      password: password.trim(),
+                    });
+                    if (!loginErr && loginData?.session) {
+                      setSession(loginData.session);
+                      setIsAuthenticated(true);
+                    } else {
+                      setAuthMessage('Account created! Sign in to continue.');
+                    }
+                  }
+                }
+              } catch (err) {
+                setAuthError(err.message);
+              } finally {
+                setAuthLoading(false);
               }
             }}
           >
-            <Text style={styles.primaryButtonText}>{isLoginMode ? 'Login' : 'Sign Up'}</Text>
+            {authLoading ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <Text style={styles.primaryBtnText}>{isLoginMode ? 'Sign In' : 'Sign Up'}</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity 
             style={{ marginTop: 20, alignItems: 'center' }}
-            onPress={() => setIsLoginMode(!isLoginMode)}
+            onPress={() => {
+              setIsLoginMode(!isLoginMode);
+              setAuthError('');
+              setAuthMessage('');
+            }}
           >
-            <Text style={{ color: '#3b82f6', fontWeight: '600' }}>
-              {isLoginMode ? "Don't have an account? Sign Up" : "Already have an account? Login"}
+            <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 14 }}>
+              {isLoginMode ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
+  // ---------------- AUTHENTICATED PORTAL ----------------
   return (
-    <ScrollView style={styles.container}>
-      <View style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
-        <Text style={styles.headerTitle}>Portal</Text>
-        <TouchableOpacity onPress={() => setIsAuthenticated(false)}>
-          <Text style={{ color: '#fff', fontWeight: 'bold' }}>Logout</Text>
+    <SafeAreaView style={styles.appContainer}>
+      <StatusBar barStyle="dark-content" />
+      
+      {/* Top Header */}
+      <View style={styles.topBar}>
+        <View>
+          <Text style={styles.appName}>JobApply<Text style={{ color: '#2563eb' }}>Pro</Text></Text>
+          <Text style={styles.userEmailLabel}>{session?.user?.email || 'User'}</Text>
+        </View>
+        <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.signOutBtn}>
+          <Text style={styles.signOutBtnText}>Log Out</Text>
         </TouchableOpacity>
       </View>
 
-      {/* User Settings Section */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>1. Integration Settings</Text>
-        <Text style={styles.label}>Your n8n Webhook API URL:</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="https://your-n8n-instance.com/webhook/..."
-          value={webhookUrl}
-          onChangeText={setWebhookUrl}
-          autoCapitalize="none"
-          keyboardType="url"
-        />
-        <TouchableOpacity style={styles.secondaryButton} onPress={handleSaveWebhook}>
-          <Text style={styles.secondaryButtonText}>Save API Key / URL</Text>
+      {/* Segmented Tab Navigation */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity 
+          style={[styles.tabItem, activeTab === 'apply' && styles.tabItemActive]}
+          onPress={() => setActiveTab('apply')}
+        >
+          <Text style={[styles.tabText, activeTab === 'apply' && styles.tabTextActive]}>📝 Apply</Text>
         </TouchableOpacity>
-      </View>
-
-      {/* Job Application Form */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>2. Job Application Form</Text>
-        
-        <Text style={styles.label}>Job Title</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g., Senior React Native Developer"
-          value={jobTitle}
-          onChangeText={setJobTitle}
-        />
-
-        <Text style={styles.label}>Requirements</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          placeholder="List the job requirements..."
-          value={requirements}
-          onChangeText={setRequirements}
-          multiline={true}
-          numberOfLines={4}
-        />
-
-        <Text style={styles.label}>Other Details</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          placeholder="Any other details related to the job..."
-          value={description}
-          onChangeText={setDescription}
-          multiline={true}
-          numberOfLines={4}
-        />
 
         <TouchableOpacity 
-          style={[styles.primaryButton, isLoading && styles.disabledButton]} 
-          onPress={handleSubmitApplication}
-          disabled={isLoading}
+          style={[styles.tabItem, activeTab === 'history' && styles.tabItemActive]}
+          onPress={() => setActiveTab('history')}
         >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.primaryButtonText}>Submit to n8n</Text>
-          )}
+          <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>
+            📜 History ({applications.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.tabItem, activeTab === 'settings' && styles.tabItemActive]}
+          onPress={() => setActiveTab('settings')}
+        >
+          <Text style={[styles.tabText, activeTab === 'settings' && styles.tabTextActive]}>⚙️ Settings</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+
+      <ScrollView style={styles.contentScroll} contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* ================= TAB 1: APPLY ================= */}
+        {activeTab === 'apply' && (
+          <View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>1. Target Job Details</Text>
+              
+              <Text style={styles.label}>Job Title *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Senior Mobile Developer"
+                value={jobTitle}
+                onChangeText={setJobTitle}
+              />
+
+              <Text style={styles.label}>Company Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Stripe, OpenAI, etc."
+                value={companyName}
+                onChangeText={setCompanyName}
+              />
+
+              <Text style={styles.label}>Recipient / Recruiter Email</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="recruiting@company.com"
+                value={recipientEmail}
+                onChangeText={setRecipientEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.label}>Job Requirements & Tech Stack</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="e.g. React Native, TypeScript, 4+ yrs experience..."
+                value={requirements}
+                onChangeText={setRequirements}
+                multiline
+              />
+
+              <Text style={styles.label}>Job Description / Custom Notes</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="Paste key responsibilities or details..."
+                value={description}
+                onChangeText={setDescription}
+                multiline
+              />
+
+              <TouchableOpacity 
+                style={[styles.primaryBtn, isGenerating && styles.disabledBtn]}
+                onPress={handleGenerateAndApply}
+                disabled={isGenerating}
+              >
+                {isGenerating ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryBtnText}>Generating Pitch with AI...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.primaryBtnText}>⚡ Generate Tailored Pitch</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Generated Result Card */}
+            {generatedResult && (
+              <View style={styles.card}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={styles.cardTitle}>2. Generated Application</Text>
+                  <TouchableOpacity 
+                    style={styles.sendActionBtn}
+                    onPress={() => handleSendEmail(generatedResult)}
+                  >
+                    <Text style={styles.sendActionBtnText}>✉️ Send Email</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.previewBox}>
+                  <Text style={styles.previewText}>{generatedResult.generatedEmail}</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ================= TAB 2: HISTORY ================= */}
+        {activeTab === 'history' && (
+          <View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Application History</Text>
+              <Text style={styles.subText}>Total Submissions: {applications.length}</Text>
+            </View>
+
+            {applications.length === 0 ? (
+              <View style={[styles.card, { alignItems: 'center', paddingVertical: 40 }]}>
+                <Text style={{ fontSize: 40, marginBottom: 12 }}>📂</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>No Applications Yet</Text>
+                <Text style={{ color: '#64748b', textAlign: 'center', marginBottom: 16 }}>
+                  Fill in the job details under the Apply tab to generate your first pitch.
+                </Text>
+                <TouchableOpacity 
+                  style={[styles.primaryBtn, { paddingHorizontal: 24 }]}
+                  onPress={() => setActiveTab('apply')}
+                >
+                  <Text style={styles.primaryBtnText}>Create Application</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              applications.map((item) => (
+                <View key={item.id} style={styles.card}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <Text style={styles.itemTitle}>{item.jobTitle}</Text>
+                      <Text style={styles.itemCompany}>{item.companyName} • {item.recipientEmail || 'No email'}</Text>
+                      <Text style={styles.itemDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+                    </View>
+                    <View style={[styles.statusBadge, item.status === 'Applied' ? styles.statusApplied : styles.statusDraft]}>
+                      <Text style={[styles.statusBadgeText, item.status === 'Applied' ? styles.statusAppliedText : styles.statusDraftText]}>
+                        {item.status}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                    <TouchableOpacity 
+                      style={styles.outlineBtn}
+                      onPress={() => setSelectedRecord(item)}
+                    >
+                      <Text style={styles.outlineBtnText}>View Pitch</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[styles.outlineBtn, { borderColor: '#ef4444' }]}
+                      onPress={() => handleDeleteRecord(item.id)}
+                    >
+                      <Text style={[styles.outlineBtnText, { color: '#ef4444' }]}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        )}
+
+        {/* ================= TAB 3: SETTINGS ================= */}
+        {activeTab === 'settings' && (
+          <View>
+            {/* Resume Card */}
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={styles.cardTitle}>1. Candidate Resume</Text>
+                <TouchableOpacity style={styles.smallActionBtn} onPress={handleUploadResumeMobile}>
+                  <Text style={styles.smallActionBtnText}>📁 Pick File</Text>
+                </TouchableOpacity>
+              </View>
+              
+              <Text style={styles.subText}>
+                {settings.resumeName ? `Attached: ${settings.resumeName}` : 'No resume file attached.'}
+              </Text>
+
+              <Text style={[styles.label, { marginTop: 12 }]}>Resume Summary / Work Experience</Text>
+              <TextInput
+                style={[styles.input, styles.textArea, { height: 120 }]}
+                placeholder="Paste key achievements, tech stack, and background for the AI..."
+                value={settings.resumeContent}
+                onChangeText={(text) => setSettings(prev => ({ ...prev, resumeContent: text }))}
+                multiline
+              />
+            </View>
+
+            {/* LLM API Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>2. LLM Engine (OpenAI / Gemini)</Text>
+              <Text style={styles.subText}>Replaces old n8n webhook with direct AI generation.</Text>
+
+              <Text style={styles.label}>Provider (OpenAI or Gemini)</Text>
+              <TextInput
+                style={styles.input}
+                value={settings.llmProvider}
+                onChangeText={(val) => setSettings(prev => ({ ...prev, llmProvider: val }))}
+              />
+
+              <Text style={styles.label}>Model Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="gpt-4o-mini"
+                value={settings.llmModel}
+                onChangeText={(val) => setSettings(prev => ({ ...prev, llmModel: val }))}
+              />
+
+              <Text style={styles.label}>API Key *</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="sk-..."
+                value={settings.llmApiKey}
+                onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
+                secureTextEntry
+              />
+            </View>
+
+            {/* Google Console API */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>3. Google Console / Gmail Account</Text>
+              <Text style={styles.subText}>Account from which emails are sent.</Text>
+
+              <Text style={styles.label}>Sender Gmail Address</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="your.email@gmail.com"
+                value={settings.googleSenderEmail}
+                onChangeText={(val) => setSettings(prev => ({ ...prev, googleSenderEmail: val }))}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.label}>Google Console Client ID</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Client ID from Google Cloud"
+                value={settings.googleClientId}
+                onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientId: val }))}
+              />
+
+              <Text style={styles.label}>Google Client Secret / App Password</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Secret or App Password"
+                value={settings.googleClientSecret}
+                onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientSecret: val }))}
+                secureTextEntry
+              />
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.primaryBtn, isSavingSettings && styles.disabledBtn, { marginHorizontal: 16 }]}
+              onPress={handleSaveSettings}
+              disabled={isSavingSettings}
+            >
+              {isSavingSettings ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryBtnText}>💾 Save All Settings</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Record Modal */}
+      {selectedRecord && (
+        <Modal transparent animationType="slide" visible={!!selectedRecord}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.modalHeading}>{selectedRecord.jobTitle}</Text>
+                <TouchableOpacity onPress={() => setSelectedRecord(null)}>
+                  <Text style={{ fontSize: 20, color: '#64748b' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
+                {selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient'}
+              </Text>
+
+              <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
+                <Text style={styles.previewText}>{selectedRecord.generatedEmail}</Text>
+              </ScrollView>
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <TouchableOpacity 
+                  style={[styles.primaryBtn, { flex: 1 }]}
+                  onPress={() => handleSendEmail(selectedRecord)}
+                >
+                  <Text style={styles.primaryBtnText}>✉️ Send Email</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.outlineBtn, { flex: 1 }]}
+                  onPress={() => setSelectedRecord(null)}
+                >
+                  <Text style={styles.outlineBtnText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  authContainer: {
     flex: 1,
-    backgroundColor: '#f5f7fa',
-  },
-  header: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#1e3a8a',
+    justifyContent: 'center',
     padding: 20,
-    paddingTop: 60,
-    alignItems: 'center',
   },
-  headerTitle: {
+  authHeaderMobile: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  authBadgeMobile: {
+    color: '#93c5fd',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  authTitleMobile: {
+    fontSize: 28,
+    fontWeight: '800',
     color: '#ffffff',
+    marginBottom: 4,
+  },
+  authSubMobile: {
+    color: '#bfdbfe',
+    fontSize: 14,
+  },
+  mobileCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  cardHeaderTitle: {
     fontSize: 22,
-    fontWeight: 'bold',
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  errorText: {
+    color: '#dc2626',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  successBox: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#6ee7b7',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  successText: {
+    color: '#059669',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  appContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  topBar: {
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  appName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  userEmailLabel: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  signOutBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#fee2e2',
+    borderRadius: 6,
+  },
+  signOutBtnText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  tabItem: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabItemActive: {
+    backgroundColor: '#eff6ff',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  tabTextActive: {
+    color: '#2563eb',
+  },
+  contentScroll: {
+    flex: 1,
   },
   card: {
     backgroundColor: '#ffffff',
-    margin: 15,
-    padding: 20,
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 18,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   cardTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 15,
-    color: '#1f2937',
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  subText: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 12,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#4b5563',
-    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: '#cbd5e1',
     borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#f9fafb',
-    marginBottom: 15,
+    padding: 10,
+    fontSize: 14,
+    backgroundColor: '#f8fafc',
+    marginBottom: 12,
+    color: '#0f172a',
   },
   textArea: {
-    height: 100,
+    height: 80,
     textAlignVertical: 'top',
   },
-  primaryButton: {
-    backgroundColor: '#3b82f6',
-    padding: 15,
+  primaryBtn: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 10,
+    justifyContent: 'center',
+    marginTop: 4,
   },
-  primaryButtonText: {
+  primaryBtnText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
   },
-  secondaryButton: {
-    backgroundColor: '#e5e7eb',
+  disabledBtn: {
+    backgroundColor: '#93c5fd',
+  },
+  previewBox: {
+    backgroundColor: '#f8fafc',
     padding: 12,
     borderRadius: 8,
-    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
-  secondaryButtonText: {
-    color: '#374151',
-    fontSize: 15,
+  previewText: {
+    fontSize: 13,
+    color: '#1e293b',
+    lineHeight: 20,
+    fontFamily: 'monospace',
+  },
+  sendActionBtn: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  sendActionBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
     fontWeight: '600',
   },
-  disabledButton: {
-    backgroundColor: '#93c5fd',
-  }
+  itemTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  itemCompany: {
+    fontSize: 13,
+    color: '#475569',
+    marginTop: 2,
+  },
+  itemDate: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  statusApplied: {
+    backgroundColor: '#ecfdf5',
+  },
+  statusAppliedText: {
+    color: '#059669',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  statusDraft: {
+    backgroundColor: '#eff6ff',
+  },
+  statusDraftText: {
+    color: '#2563eb',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  outlineBtn: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  outlineBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  smallActionBtn: {
+    backgroundColor: '#eff6ff',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  smallActionBtnText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 20,
+  },
+  modalHeading: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
 });

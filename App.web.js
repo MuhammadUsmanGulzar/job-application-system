@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -6,10 +6,13 @@ import {
   TextInput, 
   TouchableOpacity, 
   ScrollView, 
-  Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal
 } from 'react-native';
 import { supabase } from './supabase';
+import { getSettings, saveSettings, getApplications, saveApplication, deleteApplication } from './services/storage';
+import { generateJobApplication } from './services/ai';
+import { sendEmail } from './services/email';
 
 export default function AppWeb() {
   // Auth state
@@ -22,100 +25,232 @@ export default function AppWeb() {
   const [authError, setAuthError] = useState('');
   const [authMessage, setAuthMessage] = useState('');
 
-  React.useEffect(() => {
+  // Active navigation tab: 'apply' | 'history' | 'settings'
+  const [activeTab, setActiveTab] = useState('apply');
+
+  // User Settings & Integrations
+  const [settings, setSettings] = useState({
+    llmProvider: 'OpenAI',
+    llmApiKey: '',
+    llmModel: 'gpt-4o-mini',
+    googleSenderEmail: '',
+    googleClientId: '',
+    googleClientSecret: '',
+    resumeName: '',
+    resumeContent: '',
+  });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsFeedback, setSettingsFeedback] = useState('');
+
+  // Job Application Form State
+  const [jobTitle, setJobTitle] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [requirements, setRequirements] = useState('');
+  const [description, setDescription] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedResult, setGeneratedResult] = useState(null);
+
+  // Applications History State
+  const [applications, setApplications] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
+  const [selectedRecord, setSelectedRecord] = useState(null);
+
+  // Auth session listener
+  useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setIsAuthenticated(!!session);
+      if (session?.user?.id) {
+        loadUserData(session.user.id);
+      }
     });
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setIsAuthenticated(!!session);
+      if (session?.user?.id) {
+        loadUserData(session.user.id);
+      }
     });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // User settings state
-  const [webhookUrl, setWebhookUrl] = useState('');
-  
-  // Job application state
-  const [jobTitle, setJobTitle] = useState('');
-  const [requirements, setRequirements] = useState('');
-  const [description, setDescription] = useState('');
-  
-  const [isLoading, setIsLoading] = useState(false);
-
-  const currentUser = {
-    id: session?.user?.id || 'user-uuid-1234',
-    email: session?.user?.email || email || 'user@example.com'
+  const loadUserData = async (userId) => {
+    const userSettings = await getSettings(userId);
+    setSettings(userSettings);
+    const userApps = await getApplications(userId);
+    setApplications(userApps);
   };
 
-  const handleSaveWebhook = () => {
-    if (!webhookUrl.startsWith('http')) {
-      window.alert('Please enter a valid http/https URL.');
-      return;
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    const success = await saveSettings(session?.user?.id, settings);
+    setIsSavingSettings(false);
+    if (success) {
+      setSettingsFeedback('Settings saved successfully!');
+      setTimeout(() => setSettingsFeedback(''), 3000);
+    } else {
+      window.alert('Failed to save settings.');
     }
-    window.alert('Your API Webhook has been saved!');
   };
 
-  const handleSubmitApplication = async () => {
-    if (!webhookUrl) {
-      window.alert('Please enter your n8n Webhook URL in the settings first.');
+  // Resume Upload (Web File Picker)
+  const handleUploadResumeWeb = () => {
+    if (typeof document !== 'undefined') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.txt,.pdf,.doc,.docx,.md';
+      input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const content = event.target.result;
+            setSettings(prev => ({
+              ...prev,
+              resumeName: file.name,
+              resumeContent: typeof content === 'string' ? content : `[Uploaded file: ${file.name}]`,
+            }));
+            setSettingsFeedback(`Uploaded resume: ${file.name}`);
+            setTimeout(() => setSettingsFeedback(''), 3000);
+          };
+          reader.readAsText(file);
+        }
+      };
+      input.click();
+    }
+  };
+
+  // Generate Application with AI
+  const handleGenerateAndApply = async () => {
+    if (!jobTitle.trim()) {
+      window.alert('Please enter a Job Title.');
       return;
     }
 
-    if (!jobTitle || !requirements) {
-      window.alert('Please fill in the Job Title and Requirements.');
+    if (!settings.llmApiKey.trim()) {
+      window.alert('Please configure your OpenAI / LLM API Key in the Settings tab first.');
+      setActiveTab('settings');
       return;
     }
 
-    setIsLoading(true);
-
-    const payload = {
-      user_id: currentUser.id,
-      email: currentUser.email,
-      job_details: {
-        title: jobTitle,
-        requirements: requirements,
-        description: description,
-      },
-      submitted_at: new Date().toISOString(),
-    };
+    setIsGenerating(true);
+    setGeneratedResult(null);
 
     try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+      const content = await generateJobApplication({
+        jobTitle,
+        companyName,
+        recipientEmail,
+        requirements,
+        description,
+        resumeContent: settings.resumeContent,
+        resumeName: settings.resumeName,
+        apiKey: settings.llmApiKey,
+        model: settings.llmModel,
+        provider: settings.llmProvider,
       });
 
-      if (response.ok) {
-        window.alert('Success! Job application data sent to your n8n workflow.');
-        setJobTitle('');
-        setRequirements('');
-        setDescription('');
-      } else {
-        window.alert('Error: Failed to send data. Check your n8n webhook configuration.');
-      }
-    } catch (error) {
-      window.alert('Network Error: Could not reach the webhook URL.');
-      console.error(error);
+      const newApp = {
+        id: Date.now().toString(),
+        jobTitle: jobTitle.trim(),
+        companyName: companyName.trim() || 'Undisclosed Company',
+        recipientEmail: recipientEmail.trim(),
+        requirements: requirements.trim(),
+        description: description.trim(),
+        generatedEmail: content,
+        status: recipientEmail ? 'Generated' : 'Draft',
+        createdAt: new Date().toISOString(),
+      };
+
+      const updatedList = await saveApplication(session?.user?.id, newApp);
+      if (updatedList) setApplications(updatedList);
+
+      setGeneratedResult(newApp);
+    } catch (err) {
+      window.alert('Error generating application: ' + err.message);
+      console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsGenerating(false);
     }
   };
 
+  // Send Email Action
+  const handleSendEmail = async (appRecord) => {
+    if (!appRecord?.recipientEmail) {
+      window.alert('Please specify a recipient email to send the application.');
+      return;
+    }
+
+    try {
+      await sendEmail({
+        to: appRecord.recipientEmail,
+        subject: `Application for ${appRecord.jobTitle} - ${session?.user?.email || 'Candidate'}`,
+        body: appRecord.generatedEmail,
+        senderEmail: settings.googleSenderEmail,
+        googleClientId: settings.googleClientId,
+        googleClientSecret: settings.googleClientSecret,
+      });
+
+      // Update status to Applied
+      const updated = { ...appRecord, status: 'Applied' };
+      const updatedList = await saveApplication(session?.user?.id, updated);
+      if (updatedList) setApplications(updatedList);
+      if (generatedResult?.id === appRecord.id) setGeneratedResult(updated);
+      if (selectedRecord?.id === appRecord.id) setSelectedRecord(updated);
+    } catch (e) {
+      window.alert('Failed to send email: ' + e.message);
+    }
+  };
+
+  // Delete Record
+  const handleDeleteRecord = async (id) => {
+    if (window.confirm('Are you sure you want to remove this application record?')) {
+      const updated = await deleteApplication(session?.user?.id, id);
+      if (updated) setApplications(updated);
+      if (selectedRecord?.id === id) setSelectedRecord(null);
+    }
+  };
+
+  // Copy to clipboard
+  const handleCopy = (text) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      window.alert('Copied to clipboard!');
+    }
+  };
+
+  // ---------------- AUTH SCREEN ----------------
   if (!isAuthenticated) {
     return (
       <View style={styles.webContainer}>
         {/* Left Side: Hero Section */}
         <View style={styles.leftPanel}>
           <View style={styles.heroContent}>
-            <Text style={styles.heroTitle}>Job Application System</Text>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>Next-Gen AI Job Pipeline</Text>
+            </View>
+            <Text style={styles.heroTitle}>Automate Your Job Applications</Text>
             <Text style={styles.heroSubtitle}>
-              Streamline your hiring process. Connect directly to your n8n workflows and manage applications effortlessly.
+              Upload your resume, connect your LLM & Google API, and automatically generate tailored, high-converting cover letters & emails in seconds.
             </Text>
+            
+            <View style={styles.featureList}>
+              <View style={styles.featureItem}>
+                <Text style={styles.featureIcon}>⚡</Text>
+                <Text style={styles.featureText}>Instant bespoke pitch letters mapped to job requirements</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Text style={styles.featureIcon}>📄</Text>
+                <Text style={styles.featureText}>One-click resume upload & intelligent parsing</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Text style={styles.featureIcon}>📊</Text>
+                <Text style={styles.featureText}>Full application history and automated status tracking</Text>
+              </View>
+            </View>
           </View>
         </View>
         
@@ -127,7 +262,7 @@ export default function AppWeb() {
                 {isLoginMode ? 'Welcome Back' : 'Create Account'}
               </Text>
               <Text style={styles.authSubtitle}>
-                {isLoginMode ? 'Enter your details to access the portal' : 'Sign up to get started'}
+                {isLoginMode ? 'Enter your details to access your portal' : 'Sign up to get started'}
               </Text>
             </View>
 
@@ -206,7 +341,6 @@ export default function AppWeb() {
                       setSession(data.session);
                       setIsAuthenticated(true);
                     } else if (data?.user) {
-                      // Attempt immediate sign in in case auto-confirm is enabled
                       const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
                         email: email.trim(),
                         password: password.trim(),
@@ -215,7 +349,7 @@ export default function AppWeb() {
                         setSession(loginData.session);
                         setIsAuthenticated(true);
                       } else {
-                        setAuthMessage('Account created! Please check your email or disable "Confirm email" in Supabase to log in instantly.');
+                        setAuthMessage('Account created! Sign in now to access your account.');
                       }
                     }
                   }
@@ -242,8 +376,8 @@ export default function AppWeb() {
                 setAuthMessage('');
               }}
             >
-              <Text style={{ color: '#4f46e5', fontWeight: '500', fontSize: 14 }}>
-                {isLoginMode ? "Don't have an account? Create one" : "Already have an account? Sign in"}
+              <Text style={{ color: '#2563eb', fontWeight: '500', fontSize: 14 }}>
+                {isLoginMode ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -252,102 +386,532 @@ export default function AppWeb() {
     );
   }
 
-  // Authenticated Portal
+  // ---------------- MAIN APPLICATION PORTAL ----------------
+  const filteredApps = applications.filter(app => {
+    const q = historySearch.toLowerCase();
+    return (
+      app.jobTitle?.toLowerCase().includes(q) ||
+      app.companyName?.toLowerCase().includes(q) ||
+      app.recipientEmail?.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <View style={styles.webAppContainer}>
-      {/* Top Navbar */}
+      {/* Top Header & Navigation */}
       <View style={styles.webNavbar}>
-        <Text style={styles.navbarBrand}>Job System Portal</Text>
+        <View style={styles.brandContainer}>
+          <View style={styles.logoBadge}>
+            <Text style={styles.logoBadgeText}>⚡</Text>
+          </View>
+          <Text style={styles.navbarBrand}>JobApply<Text style={{ color: '#2563eb' }}>Pro</Text></Text>
+        </View>
+
+        {/* Navigation Tabs */}
+        <View style={styles.navTabs}>
+          <TouchableOpacity 
+            style={[styles.navTabItem, activeTab === 'apply' && styles.navTabItemActive]} 
+            onPress={() => setActiveTab('apply')}
+          >
+            <Text style={[styles.navTabText, activeTab === 'apply' && styles.navTabTextActive]}>
+              📝 Apply for Job
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.navTabItem, activeTab === 'history' && styles.navTabItemActive]} 
+            onPress={() => setActiveTab('history')}
+          >
+            <Text style={[styles.navTabText, activeTab === 'history' && styles.navTabTextActive]}>
+              📜 Application History ({applications.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.navTabItem, activeTab === 'settings' && styles.navTabItemActive]} 
+            onPress={() => setActiveTab('settings')}
+          >
+            <Text style={[styles.navTabText, activeTab === 'settings' && styles.navTabTextActive]}>
+              ⚙️ APIs & Resume
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.navbarRight}>
-          <Text style={styles.userEmail}>{currentUser.email}</Text>
+          <Text style={styles.userEmail}>{session?.user?.email || 'User'}</Text>
           <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.logoutButton}>
             <Text style={styles.logoutText}>Sign Out</Text>
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* Main Content Area */}
       <ScrollView contentContainerStyle={styles.webContent}>
-        <View style={styles.gridContainer}>
-          {/* Settings Card */}
-          <View style={styles.webCard}>
-            <Text style={styles.cardTitle}>Integration Settings</Text>
-            <Text style={styles.cardDescription}>Configure where your job applications will be sent.</Text>
-            
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>n8n Webhook API URL</Text>
-              <TextInput
-                style={styles.webInput}
-                placeholder="https://your-n8n-instance.com/webhook/..."
-                value={webhookUrl}
-                onChangeText={setWebhookUrl}
-                autoCapitalize="none"
-                keyboardType="url"
-              />
+        {/* ================= TAB 1: APPLY FOR JOB ================= */}
+        {activeTab === 'apply' && (
+          <View style={styles.pageContainer}>
+            {/* Quick API status alert if not configured */}
+            {!settings.llmApiKey ? (
+              <View style={styles.warningCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.warningTitle}>⚠️ LLM API Key Needed</Text>
+                  <Text style={styles.warningDesc}>
+                    Please configure your OpenAI or Gemini API key in the APIs & Resume settings tab to generate applications.
+                  </Text>
+                </View>
+                <TouchableOpacity 
+                  style={styles.quickActionBtn}
+                  onPress={() => setActiveTab('settings')}
+                >
+                  <Text style={styles.quickActionBtnText}>Go to Settings</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <View style={styles.splitLayout}>
+              {/* Form Card */}
+              <View style={styles.flexCard}>
+                <Text style={styles.cardTitle}>Job Application Form</Text>
+                <Text style={styles.cardDescription}>
+                  Enter the details of the job opportunity. Our AI will craft an email matching your uploaded resume.
+                </Text>
+
+                <View style={styles.formRow}>
+                  <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
+                    <Text style={styles.label}>Job Title *</Text>
+                    <TextInput
+                      style={styles.webInput}
+                      placeholder="e.g. Senior Frontend Engineer"
+                      value={jobTitle}
+                      onChangeText={setJobTitle}
+                      placeholderTextColor="#9ca3af"
+                    />
+                  </View>
+
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <Text style={styles.label}>Company Name</Text>
+                    <TextInput
+                      style={styles.webInput}
+                      placeholder="e.g. Acme Corp"
+                      value={companyName}
+                      onChangeText={setCompanyName}
+                      placeholderTextColor="#9ca3af"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Recipient / Recruiter Email</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="recruiter@company.com"
+                    value={recipientEmail}
+                    onChangeText={setRecipientEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Key Requirements & Tech Stack</Text>
+                  <TextInput
+                    style={[styles.webInput, styles.textArea, { height: 90 }]}
+                    placeholder="e.g. React, Next.js, Node.js, 4+ years experience, team leadership..."
+                    value={requirements}
+                    onChangeText={setRequirements}
+                    multiline
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Job Description / Notes</Text>
+                  <TextInput
+                    style={[styles.webInput, styles.textArea, { height: 110 }]}
+                    placeholder="Paste the full job description or specific points you want mentioned..."
+                    value={description}
+                    onChangeText={setDescription}
+                    multiline
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <TouchableOpacity 
+                  style={[styles.webPrimaryButton, isGenerating && styles.disabledButton]}
+                  onPress={handleGenerateAndApply}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
+                      <Text style={styles.webPrimaryButtonText}>Generating with AI...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.webPrimaryButtonText}>⚡ Generate Tailored Application</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Output Preview Card */}
+              <View style={styles.flexCard}>
+                <Text style={styles.cardTitle}>Generated Application Email</Text>
+                <Text style={styles.cardDescription}>
+                  Review, edit, copy, or send your personalized email directly to the recruiter.
+                </Text>
+
+                {generatedResult ? (
+                  <View style={styles.generatedBox}>
+                    <View style={styles.boxHeader}>
+                      <View>
+                        <Text style={styles.boxSub}>Recipient: {generatedResult.recipientEmail || 'None provided'}</Text>
+                        <Text style={styles.boxSub}>Status: <Text style={styles.statusBadgeText}>{generatedResult.status}</Text></Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity 
+                          style={styles.actionPill}
+                          onPress={() => handleCopy(generatedResult.generatedEmail)}
+                        >
+                          <Text style={styles.actionPillText}>📋 Copy</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={[styles.actionPill, styles.actionPillPrimary]}
+                          onPress={() => handleSendEmail(generatedResult)}
+                        >
+                          <Text style={styles.actionPillPrimaryText}>✉️ Send</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <ScrollView style={styles.emailPreviewScroll}>
+                      <Text style={styles.emailPreviewText}>{generatedResult.generatedEmail}</Text>
+                    </ScrollView>
+                  </View>
+                ) : (
+                  <View style={styles.emptyPreviewBox}>
+                    <Text style={{ fontSize: 40, marginBottom: 12 }}>✉️</Text>
+                    <Text style={styles.emptyPreviewTitle}>No application generated yet</Text>
+                    <Text style={styles.emptyPreviewSub}>
+                      Fill in the job requirements on the left and click "Generate Tailored Application". Your customized cover email will appear here.
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
-            <TouchableOpacity style={styles.webSecondaryButton} onPress={handleSaveWebhook}>
-              <Text style={styles.webSecondaryButtonText}>Save Configuration</Text>
-            </TouchableOpacity>
           </View>
+        )}
 
-          {/* Application Form Card */}
-          <View style={styles.webCard}>
-            <Text style={styles.cardTitle}>Submit New Job Application</Text>
-            <Text style={styles.cardDescription}>Fill out the details to send to your n8n workflow.</Text>
-            
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Job Title</Text>
+        {/* ================= TAB 2: APPLICATION HISTORY ================= */}
+        {activeTab === 'history' && (
+          <View style={styles.pageContainer}>
+            <View style={styles.historyHeader}>
+              <View>
+                <Text style={styles.cardTitle}>Application History & Records</Text>
+                <Text style={styles.cardDescription}>
+                  Track all past job submissions, pitches, and responses.
+                </Text>
+              </View>
+
               <TextInput
-                style={styles.webInput}
-                placeholder="e.g., Senior React Native Developer"
-                value={jobTitle}
-                onChangeText={setJobTitle}
+                style={[styles.webInput, { width: 300, marginBottom: 0 }]}
+                placeholder="🔍 Search company, title, email..."
+                value={historySearch}
+                onChangeText={setHistorySearch}
+                placeholderTextColor="#9ca3af"
               />
             </View>
 
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Requirements</Text>
-              <TextInput
-                style={[styles.webInput, styles.textArea]}
-                placeholder="List the job requirements..."
-                value={requirements}
-                onChangeText={setRequirements}
-                multiline={true}
-                numberOfLines={4}
-              />
+            {/* Quick Stats */}
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>{applications.length}</Text>
+                <Text style={styles.statLabel}>Total Applications</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statNumber, { color: '#059669' }]}>
+                  {applications.filter(a => a.status === 'Applied').length}
+                </Text>
+                <Text style={styles.statLabel}>Emails Sent</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statNumber, { color: '#d97706' }]}>
+                  {applications.filter(a => a.status === 'Generated' || a.status === 'Draft').length}
+                </Text>
+                <Text style={styles.statLabel}>Drafts / Prepared</Text>
+              </View>
             </View>
 
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Other Details</Text>
-              <TextInput
-                style={[styles.webInput, styles.textArea]}
-                placeholder="Any other details related to the job..."
-                value={description}
-                onChangeText={setDescription}
-                multiline={true}
-                numberOfLines={4}
-              />
+            {filteredApps.length === 0 ? (
+              <View style={styles.emptyHistoryBox}>
+                <Text style={{ fontSize: 48, marginBottom: 12 }}>📂</Text>
+                <Text style={styles.emptyPreviewTitle}>No applications found</Text>
+                <Text style={styles.emptyPreviewSub}>
+                  {applications.length === 0 
+                    ? "You haven't submitted any applications yet. Go to 'Apply for Job' to create one!" 
+                    : "No records match your search query."}
+                </Text>
+                {applications.length === 0 && (
+                  <TouchableOpacity 
+                    style={[styles.webPrimaryButton, { marginTop: 16, width: 220 }]}
+                    onPress={() => setActiveTab('apply')}
+                  >
+                    <Text style={styles.webPrimaryButtonText}>Create New Application</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <View style={styles.tableCard}>
+                {filteredApps.map((item) => (
+                  <View key={item.id} style={styles.tableRow}>
+                    <View style={{ flex: 2 }}>
+                      <Text style={styles.rowTitle}>{item.jobTitle}</Text>
+                      <Text style={styles.rowCompany}>{item.companyName} • {item.recipientEmail || 'No recipient email'}</Text>
+                      <Text style={styles.rowDate}>
+                        Applied: {new Date(item.createdAt).toLocaleDateString()} at {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+
+                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                      <View style={[styles.badgePill, item.status === 'Applied' ? styles.badgeApplied : styles.badgeDraft]}>
+                        <Text style={[styles.badgePillText, item.status === 'Applied' ? styles.badgeAppliedText : styles.badgeDraftText]}>
+                          {item.status}
+                        </Text>
+                      </View>
+                      
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                        <TouchableOpacity 
+                          style={styles.tableActionBtn}
+                          onPress={() => setSelectedRecord(item)}
+                        >
+                          <Text style={styles.tableActionBtnText}>👁️ View Pitch</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity 
+                          style={[styles.tableActionBtn, { borderColor: '#fca5a5' }]}
+                          onPress={() => handleDeleteRecord(item.id)}
+                        >
+                          <Text style={[styles.tableActionBtnText, { color: '#ef4444' }]}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ================= TAB 3: SETTINGS & APIS ================= */}
+        {activeTab === 'settings' && (
+          <View style={styles.pageContainer}>
+            <Text style={styles.cardTitle}>Settings & API Integrations</Text>
+            <Text style={styles.cardDescription}>
+              Manage your Resume, AI Provider (OpenAI / LLM API), and Google Console credentials.
+            </Text>
+
+            {settingsFeedback ? (
+              <View style={styles.successBanner}>
+                <Text style={styles.successBannerText}>{settingsFeedback}</Text>
+              </View>
+            ) : null}
+
+            {/* Section 1: Candidate Resume */}
+            <View style={styles.webCard}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>1. Candidate Resume & Profile</Text>
+                <TouchableOpacity style={styles.uploadBtn} onPress={handleUploadResumeWeb}>
+                  <Text style={styles.uploadBtnText}>📁 Upload Resume File (.pdf, .txt, .doc)</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.cardDescription}>
+                {settings.resumeName ? `Active Resume: ${settings.resumeName}` : 'No resume uploaded yet.'}
+              </Text>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Resume Text Content / Key Highlights</Text>
+                <TextInput
+                  style={[styles.webInput, styles.textArea, { height: 140 }]}
+                  placeholder="Paste your resume summary, work experience, projects, and skills here so the AI can use it..."
+                  value={settings.resumeContent}
+                  onChangeText={(text) => setSettings(prev => ({ ...prev, resumeContent: text }))}
+                  multiline
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+            </View>
+
+            {/* Section 2: LLM API Configuration */}
+            <View style={styles.webCard}>
+              <Text style={styles.sectionTitle}>2. LLM API (OpenAI / AI Engine)</Text>
+              <Text style={styles.cardDescription}>
+                Replaces the old n8n webhook. Directly communicates with OpenAI or Gemini to generate job letters.
+              </Text>
+
+              <View style={styles.formRow}>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
+                  <Text style={styles.label}>Provider</Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    {['OpenAI', 'Gemini'].map((prov) => (
+                      <TouchableOpacity
+                        key={prov}
+                        style={[
+                          styles.providerPill,
+                          settings.llmProvider === prov && styles.providerPillActive,
+                        ]}
+                        onPress={() => setSettings(prev => ({ ...prev, llmProvider: prov }))}
+                      >
+                        <Text style={[
+                          styles.providerPillText,
+                          settings.llmProvider === prov && styles.providerPillTextActive,
+                        ]}>
+                          {prov}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Model</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="gpt-4o-mini or gpt-4o"
+                    value={settings.llmModel}
+                    onChangeText={(val) => setSettings(prev => ({ ...prev, llmModel: val }))}
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>{settings.llmProvider} API Key *</Text>
+                <TextInput
+                  style={styles.webInput}
+                  placeholder={`Enter your ${settings.llmProvider} API Key (e.g. sk-...)`}
+                  value={settings.llmApiKey}
+                  onChangeText={(val) => setSettings(prev => ({ ...prev, llmApiKey: val }))}
+                  secureTextEntry
+                  placeholderTextColor="#9ca3af"
+                />
+                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+                  Stored securely in your local browser session.
+                </Text>
+              </View>
+            </View>
+
+            {/* Section 3: Google Console / Gmail API */}
+            <View style={styles.webCard}>
+              <Text style={styles.sectionTitle}>3. Google Console API & Gmail Account</Text>
+              <Text style={styles.cardDescription}>
+                Configure the sender Google account from which emails will be dispatched to recruiters.
+              </Text>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Sender Gmail Address</Text>
+                <TextInput
+                  style={styles.webInput}
+                  placeholder="yourname@gmail.com"
+                  value={settings.googleSenderEmail}
+                  onChangeText={(val) => setSettings(prev => ({ ...prev, googleSenderEmail: val }))}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+
+              <View style={styles.formRow}>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
+                  <Text style={styles.label}>Google Console Client ID</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="xxxx-xxxx.apps.googleusercontent.com"
+                    value={settings.googleClientId}
+                    onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientId: val }))}
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Google Console Client Secret / App Password</Text>
+                  <TextInput
+                    style={styles.webInput}
+                    placeholder="Client Secret or 16-character App Password"
+                    value={settings.googleClientSecret}
+                    onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientSecret: val }))}
+                    secureTextEntry
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
             </View>
 
             <TouchableOpacity 
-              style={[styles.webPrimaryButton, isLoading && styles.disabledButton]} 
-              onPress={handleSubmitApplication}
-              disabled={isLoading}
+              style={[styles.webPrimaryButton, { width: 240, alignSelf: 'flex-start' }, isSavingSettings && styles.disabledButton]}
+              onPress={handleSaveSettings}
+              disabled={isSavingSettings}
             >
-              {isLoading ? (
-                <ActivityIndicator color="#fff" />
+              {isSavingSettings ? (
+                <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.webPrimaryButtonText}>Submit Application</Text>
+                <Text style={styles.webPrimaryButtonText}>💾 Save All Settings</Text>
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        )}
       </ScrollView>
+
+      {/* Record Detail Modal */}
+      {selectedRecord && (
+        <Modal transparent animationType="fade" visible={!!selectedRecord}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <View>
+                  <Text style={styles.modalTitle}>{selectedRecord.jobTitle}</Text>
+                  <Text style={styles.modalSub}>{selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient email'}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedRecord(null)} style={styles.closeBtn}>
+                  <Text style={{ fontSize: 18, color: '#6b7280' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 380, marginVertical: 16 }}>
+                <Text style={styles.emailPreviewText}>{selectedRecord.generatedEmail}</Text>
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity 
+                  style={styles.actionPill} 
+                  onPress={() => handleCopy(selectedRecord.generatedEmail)}
+                >
+                  <Text style={styles.actionPillText}>📋 Copy Text</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.actionPill, styles.actionPillPrimary]} 
+                  onPress={() => handleSendEmail(selectedRecord)}
+                >
+                  <Text style={styles.actionPillPrimaryText}>✉️ Send via Gmail</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.actionPill, { backgroundColor: '#fee2e2' }]} 
+                  onPress={() => handleDeleteRecord(selectedRecord.id)}
+                >
+                  <Text style={{ color: '#ef4444', fontWeight: '600', fontSize: 13 }}>Delete Record</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // Auth Split Screen Styles
+  // Web Full Screen Container
   webContainer: {
     flex: 1,
     flexDirection: 'row',
@@ -355,57 +919,91 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   leftPanel: {
-    flex: 1,
-    backgroundColor: '#4f46e5',
+    flex: 1.2,
+    backgroundColor: '#1e3a8a',
     justifyContent: 'center',
+    alignItems: 'center',
     padding: 60,
   },
   heroContent: {
-    maxWidth: 500,
+    maxWidth: 520,
+  },
+  badge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+    marginBottom: 20,
+  },
+  badgeText: {
+    color: '#93c5fd',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
   heroTitle: {
-    color: '#ffffff',
-    fontSize: 48,
+    fontSize: 42,
     fontWeight: '800',
-    marginBottom: 24,
-    lineHeight: 56,
+    color: '#ffffff',
+    lineHeight: 52,
+    marginBottom: 20,
   },
   heroSubtitle: {
-    color: '#e0e7ff',
+    fontSize: 16,
+    color: '#bfdbfe',
+    lineHeight: 26,
+    marginBottom: 36,
+  },
+  featureList: {
+    gap: 16,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  featureIcon: {
     fontSize: 20,
-    lineHeight: 30,
+    marginRight: 12,
+  },
+  featureText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '500',
   },
   rightPanel: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#f8fafc',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
   },
   authCard: {
     width: '100%',
-    maxWidth: 380,
+    maxWidth: 400,
     backgroundColor: '#ffffff',
-    padding: 48,
+    padding: 44,
     borderRadius: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   authHeader: {
-    marginBottom: 32,
+    marginBottom: 24,
   },
   authTitle: {
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 8,
+    color: '#0f172a',
+    marginBottom: 6,
   },
   authSubtitle: {
-    fontSize: 15,
-    color: '#6b7280',
+    fontSize: 14,
+    color: '#64748b',
   },
   errorBanner: {
     backgroundColor: '#fef2f2',
@@ -413,13 +1011,12 @@ const styles = StyleSheet.create({
     borderColor: '#fca5a5',
     borderRadius: 8,
     padding: 12,
-    marginBottom: 18,
+    marginBottom: 16,
   },
   errorBannerText: {
     color: '#dc2626',
     fontSize: 13,
     fontWeight: '500',
-    lineHeight: 18,
   },
   successBanner: {
     backgroundColor: '#ecfdf5',
@@ -427,59 +1024,18 @@ const styles = StyleSheet.create({
     borderColor: '#6ee7b7',
     borderRadius: 8,
     padding: 12,
-    marginBottom: 18,
+    marginBottom: 16,
   },
   successBannerText: {
     color: '#059669',
     fontSize: 13,
     fontWeight: '500',
-    lineHeight: 18,
   },
-  
-  // Common Form Styles
-  formGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  webInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 14,
-    fontSize: 15,
-    backgroundColor: '#ffffff',
-    color: '#111827',
-  },
-  textArea: {
-    height: 120,
-    paddingTop: 14,
-    outlineStyle: 'none',
-  },
-  webPrimaryButton: {
-    backgroundColor: '#4f46e5',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  webPrimaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  disabledButton: {
-    backgroundColor: '#a5b4fc',
-  },
-  
-  // App Portal Styles
+
+  // Main App Shell
   webAppContainer: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#f8fafc',
     height: '100vh',
   },
   webNavbar: {
@@ -488,76 +1044,475 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 40,
+    paddingHorizontal: 36,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#e2e8f0',
+  },
+  brandContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  logoBadge: {
+    width: 32,
+    height: 32,
+    backgroundColor: '#dbeafe',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  logoBadgeText: {
+    fontSize: 16,
   },
   navbarBrand: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  navTabs: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  navTabItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  navTabItemActive: {
+    backgroundColor: '#eff6ff',
+  },
+  navTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  navTabTextActive: {
+    color: '#2563eb',
   },
   navbarRight: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   userEmail: {
-    marginRight: 20,
-    color: '#6b7280',
+    marginRight: 16,
+    color: '#64748b',
     fontSize: 14,
+    fontWeight: '500',
   },
   logoutButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     backgroundColor: '#fee2e2',
     borderRadius: 6,
   },
   logoutText: {
     color: '#ef4444',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 13,
   },
   webContent: {
-    padding: 40,
+    padding: 36,
     alignItems: 'center',
   },
-  gridContainer: {
+  pageContainer: {
     width: '100%',
-    maxWidth: 600,
-    gap: 24,
+    maxWidth: 1100,
+  },
+
+  // Split Layout for Apply
+  splitLayout: {
+    flexDirection: 'row',
+    gap: 28,
+  },
+  flexCard: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
   },
   webCard: {
     backgroundColor: '#ffffff',
-    padding: 32,
-    borderRadius: 12,
+    borderRadius: 14,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+  },
+  warningCard: {
+    backgroundColor: '#fffbeb',
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: '#fde68a',
+    borderRadius: 12,
+    padding: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 24,
+  },
+  warningTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#92400e',
+    marginBottom: 4,
+  },
+  warningDesc: {
+    fontSize: 13,
+    color: '#b45309',
+  },
+  quickActionBtn: {
+    backgroundColor: '#f59e0b',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+  },
+  quickActionBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 13,
   },
   cardTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
+    color: '#0f172a',
+    marginBottom: 6,
   },
   cardDescription: {
     fontSize: 14,
-    color: '#6b7280',
-    marginBottom: 24,
+    color: '#64748b',
+    marginBottom: 22,
+    lineHeight: 20,
   },
-  webSecondaryButton: {
-    backgroundColor: '#f3f4f6',
-    padding: 14,
+  formRow: {
+    flexDirection: 'row',
+  },
+  formGroup: {
+    marginBottom: 18,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  webInput: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
+  },
+  textArea: {
+    paddingTop: 12,
+  },
+  webPrimaryButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  webSecondaryButtonText: {
-    color: '#374151',
+  webPrimaryButtonText: {
+    color: '#ffffff',
     fontSize: 15,
     fontWeight: '600',
-  }
+  },
+  disabledButton: {
+    backgroundColor: '#93c5fd',
+  },
+
+  // Generated output
+  generatedBox: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  boxHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    paddingBottom: 12,
+    marginBottom: 14,
+  },
+  boxSub: {
+    fontSize: 13,
+    color: '#475569',
+    marginBottom: 4,
+  },
+  statusBadgeText: {
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  actionPill: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  actionPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  actionPillPrimary: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  actionPillPrimaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  emailPreviewScroll: {
+    maxHeight: 400,
+  },
+  emailPreviewText: {
+    fontSize: 14,
+    color: '#1e293b',
+    lineHeight: 22,
+    fontFamily: 'monospace',
+  },
+  emptyPreviewBox: {
+    height: 380,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#cbd5e1',
+    padding: 30,
+    textAlign: 'center',
+  },
+  emptyPreviewTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  emptyPreviewSub: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 340,
+  },
+
+  // History Tab Styles
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 24,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  statNumber: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  tableCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  rowTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  rowCompany: {
+    fontSize: 14,
+    color: '#475569',
+    marginBottom: 4,
+  },
+  rowDate: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  badgePill: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    alignSelf: 'flex-end',
+  },
+  badgeApplied: {
+    backgroundColor: '#ecfdf5',
+  },
+  badgeAppliedText: {
+    color: '#059669',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  badgeDraft: {
+    backgroundColor: '#eff6ff',
+  },
+  badgeDraftText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  tableActionBtn: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  tableActionBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  emptyHistoryBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 48,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+
+  // Settings Tab Styles
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  uploadBtn: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  uploadBtnText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  providerPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
+  providerPillActive: {
+    borderColor: '#2563eb',
+    backgroundColor: '#eff6ff',
+  },
+  providerPillText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  providerPillTextActive: {
+    color: '#2563eb',
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 28,
+    width: '100%',
+    maxWidth: 680,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    paddingBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  modalSub: {
+    fontSize: 14,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  closeBtn: {
+    padding: 4,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 16,
+  },
 });
