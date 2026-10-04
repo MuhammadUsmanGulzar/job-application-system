@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS public.applications (
     requirements TEXT,
     description TEXT,
     generated_email TEXT,
-    status TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Generated', 'Applying', 'Applied', 'Interviewing', 'Rejected', 'Accepted')),
+    status TEXT NOT NULL DEFAULT 'Generating' CHECK (status IN ('Generating', 'Generated', 'Applied', 'Interviewing', 'Rejected', 'Accepted')),
     resume_id UUID REFERENCES public.resumes(id) ON DELETE SET NULL,
     applied_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
