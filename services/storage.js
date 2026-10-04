@@ -254,36 +254,6 @@ export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
 // --------------------------------------------------------
 
 export async function getApplications(userId) {
-  // 1. Try reading from Supabase
-  if (userId) {
-    try {
-      const { data, error } = await supabase
-        .from('applications')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        const mapped = data.map(item => ({
-          id: item.id,
-          jobTitle: item.job_title,
-          companyName: item.company_name,
-          recipientEmail: item.recipient_email,
-          requirements: item.requirements,
-          description: item.description,
-          generatedEmail: item.generated_email,
-          status: item.status,
-          createdAt: item.created_at,
-        }));
-        await AsyncStorage.setItem(`${APPLICATIONS_KEY}_${userId}`, JSON.stringify(mapped));
-        return mapped;
-      }
-    } catch (e) {
-      console.log('Supabase applications fallback to local storage:', e.message);
-    }
-  }
-
-  // 2. Local fallback
   try {
     const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
     const data = await AsyncStorage.getItem(key);
@@ -301,55 +271,6 @@ export async function getApplications(userId) {
  * on button click.
  */
 export async function createApplication(userId, formDetails) {
-  if (!userId) throw new Error('User ID is required to create application');
-
-  const payload = {
-    user_id: userId,
-    job_title: formDetails.jobTitle?.trim() || '',
-    company_name: formDetails.companyName?.trim() || 'Hiring Company',
-    recipient_email: formDetails.recipientEmail?.trim() || null,
-    requirements: formDetails.requirements?.trim() || null,
-    description: formDetails.description?.trim() || null,
-    status: formDetails.recipientEmail?.trim() ? 'Applied' : 'Draft',
-  };
-
-  try {
-    const { data, error } = await supabase
-      .from('applications')
-      .insert(payload)
-      .select()
-      .single();
-
-    if (!error && data) {
-      const created = {
-        id: data.id,
-        jobTitle: data.job_title,
-        companyName: data.company_name,
-        recipientEmail: data.recipient_email || '',
-        requirements: data.requirements || '',
-        description: data.description || '',
-        generatedEmail: data.generated_email || '',
-        status: data.status,
-        createdAt: data.created_at,
-      };
-
-      // Cache locally
-      const key = `${APPLICATIONS_KEY}_${userId}`;
-      const current = await getApplications(userId);
-      const updated = [created, ...current.filter(i => i.id !== created.id)];
-      await AsyncStorage.setItem(key, JSON.stringify(updated));
-
-      return { success: true, application: created, id: data.id };
-    }
-
-    if (error) {
-      console.warn('Supabase application insert warning:', error.message);
-    }
-  } catch (err) {
-    console.error('Error inserting into applications table:', err);
-  }
-
-  // Fallback locally if offline
   const localId = Date.now().toString();
   const fallback = {
     id: localId,
@@ -361,7 +282,8 @@ export async function createApplication(userId, formDetails) {
     status: formDetails.recipientEmail?.trim() ? 'Applied' : 'Draft',
     createdAt: new Date().toISOString(),
   };
-  const key = `${APPLICATIONS_KEY}_${userId}`;
+  
+  const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
   const current = await getApplications(userId);
   const updated = [fallback, ...current.filter(i => i.id !== localId)];
   await AsyncStorage.setItem(key, JSON.stringify(updated));
@@ -376,18 +298,6 @@ export async function updateApplicationGeneratedEmail(userId, applicationId, gen
   if (!applicationId) return;
 
   try {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
-    if (isUuid && userId) {
-      await supabase
-        .from('applications')
-        .update({
-          generated_email: generatedEmail,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', applicationId)
-        .eq('user_id', userId);
-    }
-
     // Update local cache
     const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
     const current = await getApplications(userId);
@@ -405,33 +315,6 @@ export async function saveApplication(userId, application) {
   const updated = [application, ...current.filter(item => item.id !== application.id)];
   await AsyncStorage.setItem(key, JSON.stringify(updated));
 
-  // 2. Sync to Supabase
-  if (userId) {
-    try {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(application.id);
-      
-      const payload = {
-        user_id: userId,
-        job_title: application.jobTitle,
-        company_name: application.companyName || 'Hiring Company',
-        recipient_email: application.recipientEmail || null,
-        requirements: application.requirements || null,
-        description: application.description || null,
-        generated_email: application.generatedEmail || null,
-        status: application.status || 'Draft',
-        updated_at: new Date().toISOString(),
-      };
-
-      if (isUuid) {
-        payload.id = application.id;
-      }
-
-      await supabase.from('applications').upsert(payload);
-    } catch (e) {
-      console.warn('Could not sync application to Supabase:', e);
-    }
-  }
-
   return updated;
 }
 
@@ -441,19 +324,6 @@ export async function deleteApplication(userId, applicationId) {
   const current = await getApplications(userId);
   const updated = current.filter(item => item.id !== applicationId);
   await AsyncStorage.setItem(key, JSON.stringify(updated));
-
-  // 2. Delete from Supabase
-  if (userId) {
-    try {
-      await supabase
-        .from('applications')
-        .delete()
-        .eq('id', applicationId)
-        .eq('user_id', userId);
-    } catch (e) {
-      console.warn('Could not delete application from Supabase:', e);
-    }
-  }
 
   return updated;
 }
