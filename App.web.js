@@ -10,6 +10,7 @@ import {
   Modal,
   useWindowDimensions
 } from 'react-native';
+import RenderHtml from 'react-native-render-html';
 import { supabase } from './supabase';
 import { 
   getSettings, 
@@ -1596,7 +1597,11 @@ export default function AppWeb() {
                 {selectedRecord.isLoadingEmail ? (
                   <ActivityIndicator size="small" color="#10b981" style={{ marginVertical: 20 }} />
                 ) : (
-                  <Text style={styles.emailPreviewText}>{selectedRecord.generatedEmail}</Text>
+                  <RenderHtml
+                    contentWidth={width}
+                    source={{ html: selectedRecord.generatedEmail || '' }}
+                    baseStyle={{ color: '#334155', fontSize: 14 }}
+                  />
                 )}
               </ScrollView>
 

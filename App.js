@@ -11,8 +11,10 @@ import {
   Modal,
   SafeAreaView,
   StatusBar,
-  Linking
+  Linking,
+  useWindowDimensions
 } from 'react-native';
+import RenderHtml from 'react-native-render-html';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from './supabase';
 import { 
@@ -32,6 +34,7 @@ import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
 export default function App() {
+  const { width } = useWindowDimensions();
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -1266,7 +1269,11 @@ export default function App() {
                 {selectedRecord.isLoadingEmail ? (
                   <ActivityIndicator size="small" color="#10b981" style={{ marginVertical: 20 }} />
                 ) : (
-                  <Text style={styles.previewText}>{selectedRecord.generatedEmail}</Text>
+                  <RenderHtml
+                    contentWidth={width}
+                    source={{ html: selectedRecord.generatedEmail || '' }}
+                    baseStyle={{ color: '#334155', fontSize: 14 }}
+                  />
                 )}
               </ScrollView>
 
