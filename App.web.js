@@ -7,7 +7,8 @@ import {
   TouchableOpacity, 
   ScrollView, 
   ActivityIndicator,
-  Modal
+  Modal,
+  useWindowDimensions
 } from 'react-native';
 import { supabase } from './supabase';
 import { 
@@ -28,6 +29,8 @@ import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
 
 export default function AppWeb() {
+  const { width } = useWindowDimensions();
+  const isCompact = width < 980;
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -87,8 +90,6 @@ export default function AppWeb() {
       interval = setInterval(() => {
         setGenerationSeconds((prev) => prev + 1);
       }, 1000);
-    } else {
-      setGenerationSeconds(0);
     }
     return () => {
       if (interval) clearInterval(interval);
@@ -113,6 +114,15 @@ export default function AppWeb() {
   const [historySearch, setHistorySearch] = useState('');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
+  const loadUserData = React.useCallback(async (userId, userEmail) => {
+    const userSettings = await getSettings(userId);
+    setSettings(userSettings);
+    const userProfile = await getProfile(userId, userEmail);
+    setProfile(userProfile);
+    const userApps = await getApplications(userId);
+    setApplications(userApps);
+  }, []);
+
   // Auth session listener
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -132,16 +142,7 @@ export default function AppWeb() {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
-
-  const loadUserData = async (userId, userEmail) => {
-    const userSettings = await getSettings(userId);
-    setSettings(userSettings);
-    const userProfile = await getProfile(userId, userEmail);
-    setProfile(userProfile);
-    const userApps = await getApplications(userId);
-    setApplications(userApps);
-  };
+  }, [loadUserData]);
 
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
@@ -441,25 +442,25 @@ export default function AppWeb() {
         <View style={styles.leftPanel}>
           <View style={styles.heroContent}>
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>Next-Gen AI Job Pipeline</Text>
+            <Text style={styles.badgeText}>JOB APPLICATION WORKSPACE</Text>
             </View>
-            <Text style={styles.heroTitle}>Automate Your Job Applications</Text>
+            <Text style={styles.heroTitle}>A calmer way to manage your job search.</Text>
             <Text style={styles.heroSubtitle}>
-              Upload your resume, connect your LLM & Google API, and automatically generate tailored, high-converting cover letters & emails in seconds.
+              Keep your profile, tailor each application, and track every opportunity from one focused workspace.
             </Text>
             
             <View style={styles.featureList}>
               <View style={styles.featureItem}>
-                <Text style={styles.featureIcon}>⚡</Text>
-                <Text style={styles.featureText}>Instant bespoke pitch letters mapped to job requirements</Text>
+                <Text style={styles.featureIcon}>01</Text>
+                <Text style={styles.featureText}>Create role-specific application emails</Text>
               </View>
               <View style={styles.featureItem}>
-                <Text style={styles.featureIcon}>📄</Text>
-                <Text style={styles.featureText}>One-click resume upload & intelligent parsing</Text>
+                <Text style={styles.featureIcon}>02</Text>
+                <Text style={styles.featureText}>Keep your resume and professional profile ready</Text>
               </View>
               <View style={styles.featureItem}>
-                <Text style={styles.featureIcon}>📊</Text>
-                <Text style={styles.featureText}>Full application history and automated status tracking</Text>
+                <Text style={styles.featureIcon}>03</Text>
+                <Text style={styles.featureText}>Review your complete application history</Text>
               </View>
             </View>
           </View>
@@ -697,22 +698,22 @@ export default function AppWeb() {
   return (
     <View style={styles.webAppContainer}>
       {/* Top Header & Navigation */}
-      <View style={styles.webNavbar}>
+      <View style={[styles.webNavbar, isCompact && styles.webNavbarCompact]}>
         <View style={styles.brandContainer}>
           <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>⚡</Text>
+            <Text style={styles.logoBadgeText}>J</Text>
           </View>
-          <Text style={styles.navbarBrand}>JobApply<Text style={{ color: '#2563eb' }}>Pro</Text></Text>
+          <Text style={styles.navbarBrand}>JobApply</Text>
         </View>
 
         {/* Navigation Tabs */}
-        <View style={styles.navTabs}>
+        <View style={[styles.navTabs, isCompact && styles.navTabsCompact]}>
           <TouchableOpacity 
             style={[styles.navTabItem, activeTab === 'apply' && styles.navTabItemActive]} 
             onPress={() => setActiveTab('apply')}
           >
             <Text style={[styles.navTabText, activeTab === 'apply' && styles.navTabTextActive]}>
-              📝 Apply for Job
+              Apply
             </Text>
           </TouchableOpacity>
 
@@ -721,7 +722,7 @@ export default function AppWeb() {
             onPress={() => setActiveTab('profile')}
           >
             <Text style={[styles.navTabText, activeTab === 'profile' && styles.navTabTextActive]}>
-              👤 Candidate Profile
+              Profile
             </Text>
           </TouchableOpacity>
 
@@ -730,7 +731,7 @@ export default function AppWeb() {
             onPress={() => setActiveTab('history')}
           >
             <Text style={[styles.navTabText, activeTab === 'history' && styles.navTabTextActive]}>
-              📜 Application History ({applications.length})
+              History ({applications.length})
             </Text>
           </TouchableOpacity>
 
@@ -739,12 +740,12 @@ export default function AppWeb() {
             onPress={() => setActiveTab('settings')}
           >
             <Text style={[styles.navTabText, activeTab === 'settings' && styles.navTabTextActive]}>
-              ⚙️ APIs & Resume
+              Settings
             </Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.navbarRight}>
+        <View style={[styles.navbarRight, isCompact && styles.navbarRightCompact]}>
           <Text style={styles.userEmail}>
             {session?.user?.user_metadata?.full_name 
               ? `${session.user.user_metadata.full_name} (${session.user.email})`
@@ -757,17 +758,17 @@ export default function AppWeb() {
       </View>
 
       {/* Main Content Area */}
-      <ScrollView contentContainerStyle={styles.webContent}>
+      <ScrollView contentContainerStyle={[styles.webContent, isCompact && styles.webContentCompact]}>
         {/* ================= TAB 1: APPLY FOR JOB ================= */}
         {activeTab === 'apply' && (
           <View style={styles.pageContainer}>
 
-            <View style={styles.splitLayout}>
+            <View style={[styles.splitLayout, isCompact && styles.splitLayoutCompact]}>
               {/* Form Card */}
               <View style={styles.flexCard}>
                 <Text style={styles.cardTitle}>Job Application Form</Text>
                 <Text style={styles.cardDescription}>
-                  Enter the details of the job opportunity. Our AI will craft an email matching your uploaded resume.
+                  Add the opportunity details and create a tailored first draft from your saved profile.
                 </Text>
 
                 <View style={styles.formRow}>
@@ -844,7 +845,7 @@ export default function AppWeb() {
                       </Text>
                     </View>
                   ) : (
-                    <Text style={styles.webPrimaryButtonText}>⚡ Generate Tailored Application</Text>
+                    <Text style={styles.webPrimaryButtonText}>Generate application</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -868,7 +869,6 @@ export default function AppWeb() {
                       Your n8n AI workflow is crafting a tailored, high-converting pitch from your resume & target job details.
                     </Text>
                     <View style={styles.timerBadge}>
-                      <Text style={styles.timerIcon}>⏱️</Text>
                       <Text style={styles.timerCountdown}>{formatTime(generationSeconds)}</Text>
                     </View>
                   </View>
@@ -884,13 +884,13 @@ export default function AppWeb() {
                           style={styles.actionPill}
                           onPress={() => handleCopy(generatedResult.generatedEmail)}
                         >
-                          <Text style={styles.actionPillText}>📋 Copy</Text>
+                          <Text style={styles.actionPillText}>Copy</Text>
                         </TouchableOpacity>
                         <TouchableOpacity 
                           style={[styles.actionPill, styles.actionPillPrimary]}
                           onPress={() => handleSendEmail(generatedResult)}
                         >
-                          <Text style={styles.actionPillPrimaryText}>✉️ Send</Text>
+                          <Text style={styles.actionPillPrimaryText}>Send</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -901,10 +901,10 @@ export default function AppWeb() {
                   </View>
                 ) : (
                   <View style={styles.emptyPreviewBox}>
-                    <Text style={{ fontSize: 40, marginBottom: 12 }}>✉️</Text>
+                    <Text style={styles.emptyPreviewMark}>Aa</Text>
                     <Text style={styles.emptyPreviewTitle}>No application generated yet</Text>
                     <Text style={styles.emptyPreviewSub}>
-                      Fill in the job requirements on the left and click "Generate Tailored Application". Your customized cover email will appear here.
+                      Fill in the job requirements on the left and select Generate application. Your customized cover email will appear here.
                     </Text>
                   </View>
                 )}
@@ -919,7 +919,7 @@ export default function AppWeb() {
             <View style={styles.webCard}>
               <View style={styles.cardHeader}>
                 <View style={styles.iconCircle}>
-                  <Text style={{ fontSize: 20 }}>👤</Text>
+                  <Text style={styles.profileMark}>ID</Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardTitle}>Candidate Profile & Professional Links</Text>
@@ -1053,7 +1053,7 @@ export default function AppWeb() {
               <View style={{ marginTop: 10, marginBottom: 20, padding: 18, backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-                    ✉️ Live Email Signature Preview
+                    Email signature preview
                   </Text>
                   <View style={{ marginLeft: 8, backgroundColor: '#dbeafe', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 }}>
                     <Text style={{ fontSize: 11, fontWeight: '600', color: '#1d4ed8' }}>Auto-injected into Applications</Text>
@@ -1094,7 +1094,7 @@ export default function AppWeb() {
                   {isSavingProfile ? (
                     <ActivityIndicator color="#ffffff" size="small" />
                   ) : (
-                    <Text style={styles.sectionSaveBtnText}>💾 Save Profile Details</Text>
+                    <Text style={styles.sectionSaveBtnText}>Save profile</Text>
                   )}
                 </TouchableOpacity>
                 {profileFeedback ? <Text style={styles.sectionFeedbackText}>{profileFeedback}</Text> : null}
@@ -1185,7 +1185,7 @@ export default function AppWeb() {
                           style={styles.tableActionBtn}
                           onPress={() => setSelectedRecord(item)}
                         >
-                          <Text style={styles.tableActionBtnText}>👁️ View Pitch</Text>
+                          <Text style={styles.tableActionBtnText}>View</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity 
@@ -1245,7 +1245,7 @@ export default function AppWeb() {
                   {isSavingResume ? (
                     <ActivityIndicator color="#ffffff" size="small" />
                   ) : (
-                    <Text style={styles.sectionSaveBtnText}>💾 Save Resume</Text>
+                    <Text style={styles.sectionSaveBtnText}>Save resume</Text>
                   )}
                 </TouchableOpacity>
                 {resumeFeedback ? <Text style={styles.sectionFeedbackText}>{resumeFeedback}</Text> : null}
@@ -1257,7 +1257,7 @@ export default function AppWeb() {
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                 <Text style={styles.sectionTitle}>2. AI Model & Backend Engine Preferences</Text>
                 <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#bbf7d0' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>🔒 Processed on Backend</Text>
+                  <Text style={styles.securityLabel}>Processed securely</Text>
                 </View>
               </View>
               <Text style={styles.cardDescription}>
@@ -1341,7 +1341,7 @@ export default function AppWeb() {
                   {isSavingLlm ? (
                     <ActivityIndicator color="#ffffff" size="small" />
                   ) : (
-                    <Text style={styles.sectionSaveBtnText}>💾 Save AI Preferences</Text>
+                    <Text style={styles.sectionSaveBtnText}>Save AI preferences</Text>
                   )}
                 </TouchableOpacity>
                 {llmFeedback ? <Text style={styles.sectionFeedbackText}>{llmFeedback}</Text> : null}
@@ -1362,7 +1362,7 @@ export default function AppWeb() {
                   onPress={() => setShowGmailGuide(!showGmailGuide)}
                 >
                   <Text style={styles.guideToggleBtnText}>
-                    {showGmailGuide ? '▲ Hide Guide' : '📖 How to Connect (Guide)'}
+                    {showGmailGuide ? 'Hide guide' : 'Connection guide'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1376,7 +1376,7 @@ export default function AppWeb() {
                       onPress={() => setGuideMethod('appPassword')}
                     >
                       <Text style={[styles.guideTabItemText, guideMethod === 'appPassword' && styles.guideTabItemTextActive]}>
-                        ⚡ Method A: Gmail App Password (2 Mins - Recommended)
+                        App password (recommended)
                       </Text>
                     </TouchableOpacity>
 
@@ -1385,7 +1385,7 @@ export default function AppWeb() {
                       onPress={() => setGuideMethod('oauth')}
                     >
                       <Text style={[styles.guideTabItemText, guideMethod === 'oauth' && styles.guideTabItemTextActive]}>
-                        🏢 Method B: Google Cloud Console OAuth 2.0
+                        Google Cloud OAuth
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1407,7 +1407,7 @@ export default function AppWeb() {
                             style={styles.linkPill}
                             onPress={() => window.open('https://myaccount.google.com/security', '_blank')}
                           >
-                            <Text style={styles.linkPillText}>🔗 Open Google Security Settings ↗</Text>
+                            <Text style={styles.linkPillText}>Open Google security</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -1417,13 +1417,13 @@ export default function AppWeb() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.stepTitle}>Generate App Password</Text>
                           <Text style={styles.stepDesc}>
-                            Visit the Google App Passwords page. Name it <Text style={{ fontWeight: '700' }}>"Job Apply Pro"</Text> and click <Text style={{ fontWeight: '700' }}>Create</Text>.
+                            Visit the Google App Passwords page. Name it <Text style={{ fontWeight: '700' }}>Job Apply Pro</Text> and click <Text style={{ fontWeight: '700' }}>Create</Text>.
                           </Text>
                           <TouchableOpacity 
                             style={styles.linkPill}
                             onPress={() => window.open('https://myaccount.google.com/apppasswords', '_blank')}
                           >
-                            <Text style={styles.linkPillText}>🔗 Go to Google App Passwords ↗</Text>
+                            <Text style={styles.linkPillText}>Open app passwords</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -1433,7 +1433,7 @@ export default function AppWeb() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.stepTitle}>Paste Below & Save</Text>
                           <Text style={styles.stepDesc}>
-                            Copy the 16-character code (e.g. <Text style={{ fontFamily: 'monospace' }}>abcd efgh ijkl mnop</Text>) into the <Text style={{ fontWeight: '700' }}>"Client Secret / App Password"</Text> field below, and enter your Gmail address!
+                            Copy the 16-character code (e.g. <Text style={{ fontFamily: 'monospace' }}>abcd efgh ijkl mnop</Text>) into the <Text style={{ fontWeight: '700' }}>Client Secret / App Password</Text> field below, and enter your Gmail address.
                           </Text>
                         </View>
                       </View>
@@ -1449,13 +1449,13 @@ export default function AppWeb() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.stepTitle}>Create Project in Google Cloud</Text>
                           <Text style={styles.stepDesc}>
-                            Go to Google Cloud Console and create a project named <Text style={{ fontWeight: '700' }}>"Job Apply System"</Text>.
+                            Go to Google Cloud Console and create a project named <Text style={{ fontWeight: '700' }}>Job Apply System</Text>.
                           </Text>
                           <TouchableOpacity 
                             style={styles.linkPill}
                             onPress={() => window.open('https://console.cloud.google.com/projectcreate', '_blank')}
                           >
-                            <Text style={styles.linkPillText}>🔗 Open Google Cloud Console ↗</Text>
+                            <Text style={styles.linkPillText}>Open Google Cloud</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -1465,13 +1465,13 @@ export default function AppWeb() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.stepTitle}>Enable Gmail API</Text>
                           <Text style={styles.stepDesc}>
-                            Under <Text style={{ fontWeight: '700' }}>APIs & Services > Library</Text>, search for <Text style={{ fontWeight: '700' }}>"Gmail API"</Text> and click <Text style={{ fontWeight: '700' }}>Enable</Text>.
+                            Under <Text style={{ fontWeight: '700' }}>APIs & Services, then Library</Text>, search for <Text style={{ fontWeight: '700' }}>Gmail API</Text> and click <Text style={{ fontWeight: '700' }}>Enable</Text>.
                           </Text>
                           <TouchableOpacity 
                             style={styles.linkPill}
                             onPress={() => window.open('https://console.cloud.google.com/apis/library/gmail.googleapis.com', '_blank')}
                           >
-                            <Text style={styles.linkPillText}>🔗 Enable Gmail API ↗</Text>
+                            <Text style={styles.linkPillText}>Enable Gmail API</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -1547,7 +1547,7 @@ export default function AppWeb() {
                   {isSavingGoogle ? (
                     <ActivityIndicator color="#ffffff" size="small" />
                   ) : (
-                    <Text style={styles.sectionSaveBtnText}>💾 Save Gmail & Google API</Text>
+                    <Text style={styles.sectionSaveBtnText}>Save Gmail settings</Text>
                   )}
                 </TouchableOpacity>
                 {googleFeedback ? <Text style={styles.sectionFeedbackText}>{googleFeedback}</Text> : null}
@@ -1568,7 +1568,7 @@ export default function AppWeb() {
                   <Text style={styles.modalSub}>{selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient email'}</Text>
                 </View>
                 <TouchableOpacity onPress={() => setSelectedRecord(null)} style={styles.closeBtn}>
-                  <Text style={{ fontSize: 18, color: '#6b7280' }}>✕</Text>
+                  <Text style={styles.closeBtnText}>Close</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1581,14 +1581,14 @@ export default function AppWeb() {
                   style={styles.actionPill} 
                   onPress={() => handleCopy(selectedRecord.generatedEmail)}
                 >
-                  <Text style={styles.actionPillText}>📋 Copy Text</Text>
+                  <Text style={styles.actionPillText}>Copy text</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
                   style={[styles.actionPill, styles.actionPillPrimary]} 
                   onPress={() => handleSendEmail(selectedRecord)}
                 >
-                  <Text style={styles.actionPillPrimaryText}>✉️ Send via Gmail</Text>
+                  <Text style={styles.actionPillPrimaryText}>Send via Gmail</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
@@ -1612,11 +1612,11 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     height: '100vh',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f5f6f3',
   },
   leftPanel: {
     flex: 1.2,
-    backgroundColor: '#1e3a8a',
+    backgroundColor: '#17201c',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 60,
@@ -1625,29 +1625,28 @@ const styles = StyleSheet.create({
     maxWidth: 520,
   },
   badge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#66736c',
     alignSelf: 'flex-start',
     marginBottom: 20,
   },
   badgeText: {
-    color: '#93c5fd',
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    color: '#bac4be',
+    fontSize: 11,
+    fontWeight: '500',
+    letterSpacing: 1.4,
   },
   heroTitle: {
-    fontSize: 42,
-    fontWeight: '800',
+    fontSize: 46,
+    fontWeight: '600',
     color: '#ffffff',
-    lineHeight: 52,
+    lineHeight: 56,
     marginBottom: 20,
   },
   heroSubtitle: {
     fontSize: 16,
-    color: '#bfdbfe',
+    color: '#c7d0cb',
     lineHeight: 26,
     marginBottom: 36,
   },
@@ -1657,19 +1656,24 @@ const styles = StyleSheet.create({
   featureItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#35413b',
+    paddingTop: 16,
   },
   featureIcon: {
-    fontSize: 20,
-    marginRight: 12,
+    fontSize: 11,
+    color: '#93a198',
+    letterSpacing: 1,
+    marginRight: 18,
   },
   featureText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '500',
+    color: '#e6eae7',
+    fontSize: 14,
+    fontWeight: '400',
   },
   rightPanel: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f5f6f3',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
@@ -1678,28 +1682,28 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     backgroundColor: '#ffffff',
-    padding: 44,
-    borderRadius: 16,
+    padding: 40,
+    borderRadius: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
+    shadowOpacity: 0.035,
+    shadowRadius: 22,
+    elevation: 1,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
   },
   authHeader: {
     marginBottom: 24,
   },
   authTitle: {
     fontSize: 28,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
     marginBottom: 6,
   },
   authSubtitle: {
     fontSize: 14,
-    color: '#64748b',
+    color: '#6e7772',
   },
   errorBanner: {
     backgroundColor: '#fef2f2',
@@ -1731,84 +1735,101 @@ const styles = StyleSheet.create({
   // Main App Shell
   webAppContainer: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f5f6f3',
     height: '100vh',
   },
   webNavbar: {
     backgroundColor: '#ffffff',
-    height: 70,
+    minHeight: 72,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 36,
+    paddingHorizontal: 32,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: '#e3e6e1',
+    gap: 24,
+  },
+  webNavbarCompact: {
+    paddingHorizontal: 18,
+    gap: 12,
   },
   brandContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   logoBadge: {
-    width: 32,
-    height: 32,
-    backgroundColor: '#dbeafe',
-    borderRadius: 8,
+    width: 30,
+    height: 30,
+    backgroundColor: '#17201c',
+    borderRadius: 7,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
   },
   logoBadgeText: {
-    fontSize: 16,
+    fontSize: 14,
+    color: '#ffffff',
+    fontWeight: '600',
   },
   navbarBrand: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#17201c',
   },
   navTabs: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 4,
+  },
+  navTabsCompact: {
+    flex: 1,
+    justifyContent: 'center',
   },
   navTabItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 6,
   },
   navTabItemActive: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#eef1ed',
   },
   navTabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748b',
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#717a75',
   },
   navTabTextActive: {
-    color: '#2563eb',
+    color: '#17201c',
   },
   navbarRight: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  navbarRightCompact: {
+    display: 'none',
+  },
   userEmail: {
     marginRight: 16,
-    color: '#64748b',
-    fontSize: 14,
-    fontWeight: '500',
+    color: '#747d78',
+    fontSize: 12,
+    fontWeight: '400',
   },
   logoutButton: {
     paddingVertical: 7,
     paddingHorizontal: 14,
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#f1f2ef',
     borderRadius: 6,
   },
   logoutText: {
-    color: '#ef4444',
-    fontWeight: '600',
+    color: '#4f5853',
+    fontWeight: '500',
     fontSize: 13,
   },
   webContent: {
-    padding: 36,
+    padding: 40,
     alignItems: 'center',
+  },
+  webContentCompact: {
+    padding: 20,
   },
   pageContainer: {
     width: '100%',
@@ -1818,31 +1839,34 @@ const styles = StyleSheet.create({
   // Split Layout for Apply
   splitLayout: {
     flexDirection: 'row',
-    gap: 28,
+    gap: 20,
+  },
+  splitLayoutCompact: {
+    flexDirection: 'column',
   },
   flexCard: {
     flex: 1,
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 28,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
+    shadowOpacity: 0.025,
+    shadowRadius: 12,
   },
   webCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 28,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
     marginBottom: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
+    shadowOpacity: 0.025,
+    shadowRadius: 12,
   },
   warningCard: {
     backgroundColor: '#fffbeb',
@@ -1878,13 +1902,13 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
     marginBottom: 6,
   },
   cardDescription: {
     fontSize: 14,
-    color: '#64748b',
+    color: '#747d78',
     marginBottom: 22,
     lineHeight: 20,
   },
@@ -1896,47 +1920,47 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
+    fontWeight: '500',
+    color: '#3f4944',
     marginBottom: 8,
   },
   webInput: {
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderColor: '#d8dcd7',
+    borderRadius: 7,
     padding: 12,
     fontSize: 14,
     backgroundColor: '#ffffff',
-    color: '#0f172a',
+    color: '#17201c',
   },
   textArea: {
     paddingTop: 12,
   },
   webPrimaryButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#253c32',
     paddingVertical: 14,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
   webPrimaryButtonText: {
     color: '#ffffff',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   disabledButton: {
-    backgroundColor: '#93c5fd',
+    backgroundColor: '#9ca8a1',
   },
 
   // Generated output
   generatedBox: {
     flex: 1,
-    backgroundColor: '#f8fafc',
-    borderRadius: 10,
+    backgroundColor: '#fafbf9',
+    borderRadius: 8,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
   },
   boxHeader: {
     flexDirection: 'row',
@@ -1953,29 +1977,29 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   statusBadgeText: {
-    color: '#2563eb',
-    fontWeight: '600',
+    color: '#416353',
+    fontWeight: '500',
   },
   actionPill: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: '#d8dcd7',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 6,
   },
   actionPillText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
+    fontWeight: '500',
+    color: '#3f4944',
   },
   actionPillPrimary: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+    backgroundColor: '#253c32',
+    borderColor: '#253c32',
   },
   actionPillPrimaryText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#ffffff',
   },
   emailPreviewScroll: {
@@ -1989,30 +2013,29 @@ const styles = StyleSheet.create({
   },
   generatingStateBox: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 10,
     padding: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#93c5fd',
-    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#dfe3de',
     minHeight: 380,
   },
   pulseLoaderCircle: {
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#eef1ed',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 18,
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#d8ded9',
   },
   generatingStateTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#1e293b',
+    fontWeight: '600',
+    color: '#25302b',
     textAlign: 'center',
     marginBottom: 8,
   },
@@ -2027,15 +2050,10 @@ const styles = StyleSheet.create({
   timerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#17201c',
     paddingVertical: 10,
     paddingHorizontal: 22,
-    borderRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 3,
+    borderRadius: 7,
   },
   timerIcon: {
     fontSize: 18,
@@ -2043,8 +2061,8 @@ const styles = StyleSheet.create({
   },
   timerCountdown: {
     color: '#ffffff',
-    fontSize: 24,
-    fontWeight: '800',
+    fontSize: 20,
+    fontWeight: '600',
     fontFamily: 'monospace',
     letterSpacing: 2,
   },
@@ -2052,26 +2070,48 @@ const styles = StyleSheet.create({
     height: 380,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#fafbf9',
     borderRadius: 10,
     borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#cbd5e1',
+    borderColor: '#e3e6e1',
     padding: 30,
     textAlign: 'center',
   },
   emptyPreviewTitle: {
     fontSize: 17,
-    fontWeight: '700',
-    color: '#334155',
+    fontWeight: '600',
+    color: '#35403a',
     marginBottom: 8,
   },
   emptyPreviewSub: {
     fontSize: 14,
-    color: '#64748b',
+    color: '#747d78',
     textAlign: 'center',
     lineHeight: 20,
     maxWidth: 340,
+  },
+  emptyPreviewMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#eef1ed',
+    color: '#536159',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingTop: 13,
+    marginBottom: 14,
+  },
+  profileMark: {
+    color: '#536159',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  securityLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#52705f',
   },
 
   // History Tab Styles
@@ -2089,15 +2129,15 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
   },
   statNumber: {
     fontSize: 28,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
     marginBottom: 4,
   },
   statLabel: {
@@ -2107,9 +2147,9 @@ const styles = StyleSheet.create({
   },
   tableCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
     overflow: 'hidden',
   },
   tableRow: {
@@ -2121,8 +2161,8 @@ const styles = StyleSheet.create({
   },
   rowTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
     marginBottom: 4,
   },
   rowCompany: {
@@ -2141,18 +2181,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
   },
   badgeApplied: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: '#edf3ef',
   },
   badgeAppliedText: {
-    color: '#059669',
+    color: '#3f6954',
     fontSize: 12,
     fontWeight: '600',
   },
   badgeDraft: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f0f1ee',
   },
   badgeDraftText: {
-    color: '#2563eb',
+    color: '#5d6761',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -2191,15 +2231,15 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   uploadBtn: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f3f5f2',
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#d8dcd7',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 6,
   },
   uploadBtnText: {
-    color: '#2563eb',
+    color: '#354b40',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -2212,8 +2252,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   providerPillActive: {
-    borderColor: '#2563eb',
-    backgroundColor: '#eff6ff',
+    borderColor: '#8e9c94',
+    backgroundColor: '#eef1ed',
   },
   providerPillText: {
     fontSize: 14,
@@ -2221,28 +2261,28 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   providerPillTextActive: {
-    color: '#2563eb',
+    color: '#253c32',
   },
 
   // Guide styles
   guideToggleBtn: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f3f5f2',
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#d8dcd7',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
   },
   guideToggleBtnText: {
-    color: '#2563eb',
+    color: '#354b40',
     fontSize: 13,
     fontWeight: '600',
   },
   guideBox: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
+    backgroundColor: '#fafbf9',
+    borderRadius: 9,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
     padding: 20,
     marginBottom: 20,
   },
@@ -2263,8 +2303,8 @@ const styles = StyleSheet.create({
     borderColor: '#cbd5e1',
   },
   guideTabItemActive: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+    backgroundColor: '#253c32',
+    borderColor: '#253c32',
   },
   guideTabItemText: {
     fontSize: 13,
@@ -2292,7 +2332,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#50645a',
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 2,
@@ -2315,14 +2355,14 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   linkPill: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#eef1ed',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 6,
     alignSelf: 'flex-start',
   },
   linkPillText: {
-    color: '#2563eb',
+    color: '#354b40',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -2333,7 +2373,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   sectionSaveBtn: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#253c32',
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 8,
@@ -2347,7 +2387,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   sectionFeedbackText: {
-    color: '#059669',
+    color: '#3f6954',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -2362,13 +2402,13 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 28,
     width: '100%',
     maxWidth: 680,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.09,
     shadowRadius: 20,
   },
   modalHeader: {
@@ -2381,8 +2421,8 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
   },
   modalSub: {
     fontSize: 14,
@@ -2391,6 +2431,11 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     padding: 4,
+  },
+  closeBtnText: {
+    color: '#606963',
+    fontSize: 12,
+    fontWeight: '500',
   },
   modalActions: {
     flexDirection: 'row',

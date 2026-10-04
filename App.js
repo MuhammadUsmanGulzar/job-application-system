@@ -21,7 +21,6 @@ import {
   getApplications, 
   saveApplication, 
   deleteApplication, 
-  uploadResumeFile,
   getProfile,
   saveProfile,
   defaultProfile,
@@ -87,8 +86,6 @@ export default function App() {
       interval = setInterval(() => {
         setGenerationSeconds((prev) => prev + 1);
       }, 1000);
-    } else {
-      setGenerationSeconds(0);
     }
     return () => {
       if (interval) clearInterval(interval);
@@ -112,6 +109,15 @@ export default function App() {
   const [applications, setApplications] = useState([]);
   const [selectedRecord, setSelectedRecord] = useState(null);
 
+  const loadUserData = React.useCallback(async (userId, userEmail) => {
+    const userSettings = await getSettings(userId);
+    setSettings(userSettings);
+    const userProfile = await getProfile(userId, userEmail);
+    setProfile(userProfile);
+    const userApps = await getApplications(userId);
+    setApplications(userApps);
+  }, []);
+
   // Supabase Auth listener
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -131,16 +137,7 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
-
-  const loadUserData = async (userId, userEmail) => {
-    const userSettings = await getSettings(userId);
-    setSettings(userSettings);
-    const userProfile = await getProfile(userId, userEmail);
-    setProfile(userProfile);
-    const userApps = await getApplications(userId);
-    setApplications(userApps);
-  };
+  }, [loadUserData]);
 
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
@@ -200,7 +197,7 @@ export default function App() {
           try {
             await saveSettings(session.user.id, updated);
             Alert.alert('Resume Selected', `Attached & saved: ${file.name}`);
-          } catch (e) {
+          } catch (_e) {
             Alert.alert('Resume Selected', `Attached: ${file.name}`);
           }
         } else {
@@ -661,14 +658,14 @@ export default function App() {
           style={[styles.tabItem, activeTab === 'apply' && styles.tabItemActive]}
           onPress={() => setActiveTab('apply')}
         >
-          <Text style={[styles.tabText, activeTab === 'apply' && styles.tabTextActive]}>📝 Apply</Text>
+          <Text style={[styles.tabText, activeTab === 'apply' && styles.tabTextActive]}>Apply</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
           style={[styles.tabItem, activeTab === 'profile' && styles.tabItemActive]}
           onPress={() => setActiveTab('profile')}
         >
-          <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>👤 Profile</Text>
+          <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>Profile</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -676,7 +673,7 @@ export default function App() {
           onPress={() => setActiveTab('history')}
         >
           <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>
-            📜 History ({applications.length})
+            History ({applications.length})
           </Text>
         </TouchableOpacity>
 
@@ -684,7 +681,7 @@ export default function App() {
           style={[styles.tabItem, activeTab === 'settings' && styles.tabItemActive]}
           onPress={() => setActiveTab('settings')}
         >
-          <Text style={[styles.tabText, activeTab === 'settings' && styles.tabTextActive]}>⚙️ Settings</Text>
+          <Text style={[styles.tabText, activeTab === 'settings' && styles.tabTextActive]}>Settings</Text>
         </TouchableOpacity>
       </View>
 
@@ -752,7 +749,7 @@ export default function App() {
                     </Text>
                   </View>
                 ) : (
-                  <Text style={styles.primaryBtnText}>⚡ Generate Tailored Pitch</Text>
+                  <Text style={styles.primaryBtnText}>Generate application</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -770,7 +767,6 @@ export default function App() {
                   Your n8n AI workflow is crafting your tailored pitch.
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 24 }}>
-                  <Text style={{ fontSize: 16, marginRight: 6 }}>⏱️</Text>
                   <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: '800', fontFamily: 'monospace', letterSpacing: 2 }}>
                     {formatTime(generationSeconds)}
                   </Text>
@@ -787,7 +783,7 @@ export default function App() {
                     style={styles.sendActionBtn}
                     onPress={() => handleSendEmail(generatedResult)}
                   >
-                    <Text style={styles.sendActionBtnText}>✉️ Send Email</Text>
+                    <Text style={styles.sendActionBtnText}>Send email</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -803,7 +799,7 @@ export default function App() {
         {activeTab === 'profile' && (
           <View>
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>👤 Candidate Profile & Socials</Text>
+              <Text style={styles.cardTitle}>Candidate profile</Text>
               <Text style={styles.subText}>
                 Your contact details, portfolio, and LinkedIn are automatically added to job emails and synced with n8n.
               </Text>
@@ -890,7 +886,7 @@ export default function App() {
               {/* Email Signature Live Preview */}
               <View style={{ marginTop: 14, marginBottom: 8, padding: 14, backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e293b', textTransform: 'uppercase', marginBottom: 6 }}>
-                  ✉️ Email Signature Preview
+                  Email signature preview
                 </Text>
                 <View style={{ padding: 12, backgroundColor: '#ffffff', borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1' }}>
                   <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
@@ -920,7 +916,7 @@ export default function App() {
                 {isSavingProfile ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>💾 Save Profile Details</Text>
+                  <Text style={styles.primaryBtnText}>Save profile</Text>
                 )}
               </TouchableOpacity>
               {profileFeedback ? (
@@ -1024,7 +1020,7 @@ export default function App() {
                 {isSavingResume ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>💾 Save Resume</Text>
+                  <Text style={styles.primaryBtnText}>Save resume</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1034,7 +1030,7 @@ export default function App() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <Text style={styles.cardTitle}>2. AI Engine Preferences</Text>
                 <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: '#bbf7d0' }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#16a34a' }}>🔒 Backend Engine</Text>
+                  <Text style={styles.securityLabel}>Processed securely</Text>
                 </View>
               </View>
               <Text style={styles.subText}>
@@ -1084,7 +1080,7 @@ export default function App() {
                       onPress={() => setSettings(prev => ({ ...prev, llmModel: m.id }))}
                     >
                       <Text style={[styles.mobileModelText, isSelected && styles.mobileModelTextActive]}>
-                        {isSelected ? '● ' : '○ '} {m.label}
+                        {m.label}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1099,7 +1095,7 @@ export default function App() {
                 {isSavingLlm ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>💾 Save AI Preferences</Text>
+                  <Text style={styles.primaryBtnText}>Save AI preferences</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1113,7 +1109,7 @@ export default function App() {
                   onPress={() => setShowGmailGuide(!showGmailGuide)}
                 >
                   <Text style={styles.guideToggleBtnText}>
-                    {showGmailGuide ? '▲ Hide Guide' : '📖 Guide'}
+                    {showGmailGuide ? 'Hide guide' : 'Connection guide'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1128,7 +1124,7 @@ export default function App() {
                       onPress={() => setGuideMethod('appPassword')}
                     >
                       <Text style={[styles.mobileGuideTabText, guideMethod === 'appPassword' && styles.mobileGuideTabTextActive]}>
-                        ⚡ App Password (2 min)
+                        App password
                       </Text>
                     </TouchableOpacity>
 
@@ -1137,7 +1133,7 @@ export default function App() {
                       onPress={() => setGuideMethod('oauth')}
                     >
                       <Text style={[styles.mobileGuideTabText, guideMethod === 'oauth' && styles.mobileGuideTabTextActive]}>
-                        🏢 Cloud OAuth 2.0
+                        Cloud OAuth
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1151,17 +1147,17 @@ export default function App() {
                         style={styles.linkButtonMobile}
                         onPress={() => Linking.openURL('https://myaccount.google.com/security')}
                       >
-                        <Text style={styles.linkButtonMobileText}>🔗 Open Google Security ↗</Text>
+                        <Text style={styles.linkButtonMobileText}>Open Google security</Text>
                       </TouchableOpacity>
 
                       <Text style={styles.guideStepText}>
-                        <Text style={{ fontWeight: '700' }}>2. Generate App Password:</Text> Name it "Job Apply Pro" and copy the 16-letter code.
+                        <Text style={{ fontWeight: '700' }}>2. Generate App Password:</Text> Name it Job Apply Pro and copy the 16-letter code.
                       </Text>
                       <TouchableOpacity 
                         style={styles.linkButtonMobile}
                         onPress={() => Linking.openURL('https://myaccount.google.com/apppasswords')}
                       >
-                        <Text style={styles.linkButtonMobileText}>🔗 Go to App Passwords ↗</Text>
+                        <Text style={styles.linkButtonMobileText}>Open app passwords</Text>
                       </TouchableOpacity>
 
                       <Text style={styles.guideStepText}>
@@ -1177,7 +1173,7 @@ export default function App() {
                         style={styles.linkButtonMobile}
                         onPress={() => Linking.openURL('https://console.cloud.google.com')}
                       >
-                        <Text style={styles.linkButtonMobileText}>🔗 Open Google Cloud Console ↗</Text>
+                        <Text style={styles.linkButtonMobileText}>Open Google Cloud</Text>
                       </TouchableOpacity>
                       <Text style={styles.guideStepText}>
                         <Text style={{ fontWeight: '700' }}>2. OAuth Client ID:</Text> Create Web Application credentials with scope <Text style={{ fontFamily: 'monospace' }}>https://www.googleapis.com/auth/gmail.send</Text> and paste keys below.
@@ -1222,7 +1218,7 @@ export default function App() {
                 {isSavingGoogle ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>💾 Save Gmail & Google API</Text>
+                  <Text style={styles.primaryBtnText}>Save Gmail settings</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1238,7 +1234,7 @@ export default function App() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <Text style={styles.modalHeading}>{selectedRecord.jobTitle}</Text>
                 <TouchableOpacity onPress={() => setSelectedRecord(null)}>
-                  <Text style={{ fontSize: 20, color: '#64748b' }}>✕</Text>
+                  <Text style={styles.modalCloseText}>Close</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1255,7 +1251,7 @@ export default function App() {
                   style={[styles.primaryBtn, { flex: 1 }]}
                   onPress={() => handleSendEmail(selectedRecord)}
                 >
-                  <Text style={styles.primaryBtnText}>✉️ Send Email</Text>
+                  <Text style={styles.primaryBtnText}>Send email</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={[styles.outlineBtn, { flex: 1 }]}
@@ -1275,7 +1271,7 @@ export default function App() {
 const styles = StyleSheet.create({
   authContainer: {
     flex: 1,
-    backgroundColor: '#1e3a8a',
+    backgroundColor: '#17201c',
     justifyContent: 'center',
     padding: 20,
   },
@@ -1284,7 +1280,7 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   authBadgeMobile: {
-    color: '#93c5fd',
+    color: '#b9c4bd',
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 1,
@@ -1292,28 +1288,28 @@ const styles = StyleSheet.create({
   },
   authTitleMobile: {
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: '600',
     color: '#ffffff',
     marginBottom: 4,
   },
   authSubMobile: {
-    color: '#bfdbfe',
+    color: '#c7d0cb',
     fontSize: 14,
   },
   mobileCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 3,
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   cardHeaderTitle: {
     fontSize: 22,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
     marginBottom: 16,
     textAlign: 'center',
   },
@@ -1345,7 +1341,7 @@ const styles = StyleSheet.create({
   },
   appContainer: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f5f6f3',
   },
   topBar: {
     backgroundColor: '#ffffff',
@@ -1355,12 +1351,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: '#e3e6e1',
   },
   appName: {
     fontSize: 20,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
   },
   userEmailLabel: {
     fontSize: 12,
@@ -1369,11 +1365,11 @@ const styles = StyleSheet.create({
   signOutBtn: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#f0f2ef',
     borderRadius: 6,
   },
   signOutBtnText: {
-    color: '#ef4444',
+    color: '#56605a',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1381,7 +1377,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: '#e3e6e1',
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
@@ -1392,15 +1388,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   tabItemActive: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#eef1ed',
   },
   tabText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#64748b',
+    fontWeight: '500',
+    color: '#747d78',
   },
   tabTextActive: {
-    color: '#2563eb',
+    color: '#253c32',
   },
   contentScroll: {
     flex: 1,
@@ -1410,45 +1406,45 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 14,
     padding: 18,
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
   },
   cardTitle: {
     fontSize: 17,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
     marginBottom: 4,
   },
   subText: {
     fontSize: 13,
-    color: '#64748b',
+    color: '#747d78',
     marginBottom: 12,
   },
   label: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
+    fontWeight: '500',
+    color: '#3f4944',
     marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderColor: '#d8dcd7',
+    borderRadius: 7,
     padding: 10,
     fontSize: 14,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#fafbf9',
     marginBottom: 12,
-    color: '#0f172a',
+    color: '#17201c',
   },
   textArea: {
     height: 80,
     textAlignVertical: 'top',
   },
   primaryBtn: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#253c32',
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 4,
@@ -1456,10 +1452,10 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     color: '#ffffff',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   disabledBtn: {
-    backgroundColor: '#93c5fd',
+    backgroundColor: '#9ca8a1',
   },
   previewBox: {
     backgroundColor: '#f8fafc',
@@ -1475,7 +1471,7 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
   },
   sendActionBtn: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#253c32',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 6,
@@ -1506,18 +1502,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   statusApplied: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: '#edf3ef',
   },
   statusAppliedText: {
-    color: '#059669',
+    color: '#3f6954',
     fontSize: 11,
     fontWeight: '600',
   },
   statusDraft: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f0f1ee',
   },
   statusDraftText: {
-    color: '#2563eb',
+    color: '#5d6761',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -1535,13 +1531,13 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   smallActionBtn: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#eef1ed',
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 6,
   },
   smallActionBtnText: {
-    color: '#2563eb',
+    color: '#354b40',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1553,33 +1549,33 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 20,
   },
   modalHeading: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '600',
+    color: '#17201c',
   },
   // Mobile guide styles
   guideToggleBtn: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f3f5f2',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#d8dcd7',
   },
   guideToggleBtnText: {
-    color: '#2563eb',
+    color: '#354b40',
     fontSize: 12,
     fontWeight: '600',
   },
   mobileGuideBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#fafbf9',
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#e3e6e1',
     padding: 12,
     marginBottom: 14,
   },
@@ -1600,8 +1596,8 @@ const styles = StyleSheet.create({
     borderColor: '#cbd5e1',
   },
   mobileGuideTabActive: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+    backgroundColor: '#253c32',
+    borderColor: '#253c32',
   },
   mobileGuideTabText: {
     fontSize: 11,
@@ -1617,7 +1613,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   linkButtonMobile: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#eef1ed',
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 6,
@@ -1625,7 +1621,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   linkButtonMobileText: {
-    color: '#2563eb',
+    color: '#354b40',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -1638,8 +1634,8 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
   },
   mobileModelOptionActive: {
-    borderColor: '#2563eb',
-    backgroundColor: '#eff6ff',
+    borderColor: '#8e9c94',
+    backgroundColor: '#eef1ed',
   },
   mobileModelText: {
     fontSize: 12,
@@ -1647,7 +1643,17 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   mobileModelTextActive: {
-    color: '#2563eb',
-    fontWeight: '700',
+    color: '#253c32',
+    fontWeight: '600',
+  },
+  securityLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#52705f',
+  },
+  modalCloseText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#606963',
   },
 });

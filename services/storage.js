@@ -119,7 +119,7 @@ export async function saveProfile(userId, profile) {
       await supabase.auth.updateUser({
         data: { full_name: profile.fullName },
       });
-    } catch (authErr) {
+    } catch (_authErr) {
       // ignore
     }
   }
