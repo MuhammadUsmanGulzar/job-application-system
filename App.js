@@ -418,6 +418,26 @@ export default function App() {
     ]);
   };
 
+  const handleOpenRecord = async (item) => {
+    setSelectedRecord({ ...item, isLoadingEmail: true });
+    try {
+      const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, item.id);
+      if (emailRecord && emailRecord.fullEmail) {
+        setSelectedRecord(prev => {
+          if (prev && prev.id === item.id) {
+            return { ...prev, isLoadingEmail: false, generatedEmail: emailRecord.fullEmail };
+          }
+          return prev;
+        });
+      } else {
+        setSelectedRecord(prev => prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev);
+      }
+    } catch (err) {
+      console.warn('Error fetching email for modal:', err);
+      setSelectedRecord(prev => prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev);
+    }
+  };
+
   // ---------------- AUTH SCREEN ----------------
   if (!isAuthenticated) {
     return (
@@ -969,7 +989,7 @@ export default function App() {
                   <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                     <TouchableOpacity 
                       style={styles.outlineBtn}
-                      onPress={() => setSelectedRecord(item)}
+                      onPress={() => handleOpenRecord(item)}
                     >
                       <Text style={styles.outlineBtnText}>View Pitch</Text>
                     </TouchableOpacity>
@@ -1243,7 +1263,11 @@ export default function App() {
               </Text>
 
               <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
-                <Text style={styles.previewText}>{selectedRecord.generatedEmail}</Text>
+                {selectedRecord.isLoadingEmail ? (
+                  <ActivityIndicator size="small" color="#10b981" style={{ marginVertical: 20 }} />
+                ) : (
+                  <Text style={styles.previewText}>{selectedRecord.generatedEmail}</Text>
+                )}
               </ScrollView>
 
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>

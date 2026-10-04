@@ -434,6 +434,26 @@ export default function AppWeb() {
     }
   };
 
+  const handleOpenRecord = async (item) => {
+    setSelectedRecord({ ...item, isLoadingEmail: true });
+    try {
+      const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, item.id);
+      if (emailRecord && emailRecord.fullEmail) {
+        setSelectedRecord(prev => {
+          if (prev && prev.id === item.id) {
+            return { ...prev, isLoadingEmail: false, generatedEmail: emailRecord.fullEmail };
+          }
+          return prev;
+        });
+      } else {
+        setSelectedRecord(prev => prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev);
+      }
+    } catch (err) {
+      console.warn('Error fetching email for modal:', err);
+      setSelectedRecord(prev => prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev);
+    }
+  };
+
   // ---------------- AUTH SCREEN ----------------
   if (!isAuthenticated) {
     return (
@@ -1183,7 +1203,7 @@ export default function AppWeb() {
                       <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                         <TouchableOpacity 
                           style={styles.tableActionBtn}
-                          onPress={() => setSelectedRecord(item)}
+                          onPress={() => handleOpenRecord(item)}
                         >
                           <Text style={styles.tableActionBtnText}>View</Text>
                         </TouchableOpacity>
@@ -1573,7 +1593,11 @@ export default function AppWeb() {
               </View>
 
               <ScrollView style={{ maxHeight: 380, marginVertical: 16 }}>
-                <Text style={styles.emailPreviewText}>{selectedRecord.generatedEmail}</Text>
+                {selectedRecord.isLoadingEmail ? (
+                  <ActivityIndicator size="small" color="#10b981" style={{ marginVertical: 20 }} />
+                ) : (
+                  <Text style={styles.emailPreviewText}>{selectedRecord.generatedEmail}</Text>
+                )}
               </ScrollView>
 
               <View style={styles.modalActions}>
