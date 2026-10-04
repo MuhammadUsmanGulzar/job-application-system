@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS public.application_emails (
     application_id UUID REFERENCES public.applications(id) ON DELETE CASCADE,
     subject TEXT,
     body TEXT,
-    status TEXT DEFAULT 'pending',
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'sent')),
     sent_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
