@@ -145,6 +145,62 @@ export default function AppWeb() {
     return () => subscription.unsubscribe();
   }, [loadUserData]);
 
+  // Handle OAuth redirect from URL parameters
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('gmail_success')) {
+        setGoogleFeedback('Successfully connected to Gmail!');
+        window.history.replaceState({}, document.title, window.location.pathname);
+        if (session?.user?.id) {
+          getSettings(session.user.id).then(setSettings);
+        }
+      } else if (params.get('gmail_error')) {
+        setGoogleFeedback(`Gmail connection failed: ${params.get('gmail_error')}`);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, [session]);
+
+  const handleConnectGmail = async () => {
+    if (!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail) return;
+    setGoogleFeedback('Starting connection...');
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const response = await fetch(`${process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://lbnohysxebihrmeqmszy.supabase.co'}/functions/v1/gmail-oauth`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentSession.access_token}`
+        },
+        body: JSON.stringify({ action: 'start' })
+      });
+      const data = await response.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setGoogleFeedback(`Error: ${data.error || 'Failed to start OAuth'}`);
+      }
+    } catch (err) {
+      setGoogleFeedback('Network error starting OAuth');
+    }
+  };
+
+  const handleDisconnectGmail = async () => {
+    setGoogleFeedback('Disconnecting...');
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .update({ google_refresh_token: null, google_connected_at: null })
+        .eq('user_id', session.user.id);
+      if (error) throw error;
+      setSettings(prev => ({ ...prev, googleConnectedAt: null }));
+      setGoogleFeedback('Disconnected successfully.');
+    } catch (err) {
+      setGoogleFeedback('Error disconnecting');
+    }
+  };
+
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
     setProfileFeedback('');
@@ -1520,7 +1576,19 @@ export default function AppWeb() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.stepTitle}>Create Credentials</Text>
                           <Text style={styles.stepDesc}>
-                            Under <Text style={{ fontWeight: '700' }}>Credentials</Text>, create an <Text style={{ fontWeight: '700' }}>OAuth client ID (Web Application)</Text>, and copy your Client ID & Client Secret below.
+                            Under <Text style={{ fontWeight: '700' }}>Credentials</Text>, create an <Text style={{ fontWeight: '700' }}>OAuth client ID (Web Application)</Text>.
+                            Under <Text style={{ fontWeight: '700' }}>Authorized redirect URIs</Text>, add:
+                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, padding: 6, backgroundColor: '#f1f5f9', borderRadius: 6 }}>
+                            <Text style={{ fontFamily: 'monospace', fontSize: 12, flex: 1 }} numberOfLines={1}>
+                              {process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://<your-project>.supabase.co'}/functions/v1/gmail-oauth
+                            </Text>
+                            <TouchableOpacity onPress={() => handleCopy(`${process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://<your-project>.supabase.co'}/functions/v1/gmail-oauth`)}>
+                              <Text style={{ color: '#4f46e5', fontSize: 12, fontWeight: '600' }}>Copy</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={[styles.stepDesc, { marginTop: 4 }]}>
+                            Then copy your Client ID & Client Secret below.
                           </Text>
                         </View>
                       </View>
@@ -1567,7 +1635,7 @@ export default function AppWeb() {
                 </View>
               </View>
 
-              <View style={styles.cardActionRow}>
+              <View style={[styles.cardActionRow, { flexWrap: 'wrap', gap: 12 }]}>
                 <TouchableOpacity 
                   style={[styles.sectionSaveBtn, isSavingGoogle && styles.disabledButton]}
                   onPress={() => handleSaveSection('google')}
@@ -1579,6 +1647,35 @@ export default function AppWeb() {
                     <Text style={styles.sectionSaveBtnText}>Save Gmail settings</Text>
                   )}
                 </TouchableOpacity>
+
+                <View style={{ flex: 1, minWidth: 300, flexDirection: 'row', alignItems: 'center' }}>
+                  {!settings.googleConnectedAt ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <TouchableOpacity
+                        style={[styles.sectionSaveBtn, { backgroundColor: '#4285F4' }, (!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail) && styles.disabledButton]}
+                        onPress={handleConnectGmail}
+                        disabled={!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail}
+                      >
+                        <Text style={styles.sectionSaveBtnText}>Connect Gmail</Text>
+                      </TouchableOpacity>
+                      {(!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail) && (
+                        <Text style={{ marginLeft: 8, fontSize: 12, color: '#64748b' }}>Fill fields above first</Text>
+                      )}
+                      <Text style={{ marginLeft: 8, fontSize: 12, color: '#64748b' }}>Status: Not connected</Text>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                      <Text style={{ fontSize: 13, color: '#10b981' }}>Connected as {settings.googleSenderEmail} on {new Date(settings.googleConnectedAt).toLocaleDateString()}</Text>
+                      <TouchableOpacity onPress={handleConnectGmail} style={{ padding: 6, backgroundColor: '#f1f5f9', borderRadius: 4 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '600' }}>Reconnect</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={handleDisconnectGmail} style={{ padding: 6, backgroundColor: '#fee2e2', borderRadius: 4 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#ef4444' }}>Disconnect</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
                 {googleFeedback ? <Text style={styles.sectionFeedbackText}>{googleFeedback}</Text> : null}
               </View>
             </View>
