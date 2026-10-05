@@ -137,7 +137,7 @@ export async function getSettings(userId) {
     try {
       const { data, error } = await supabase
         .from('user_settings')
-        .select('*')
+        .select('llm_provider, llm_api_key, llm_model, google_sender_email, google_client_id, google_client_secret, resume_name, resume_content, google_connected_at')
         .eq('user_id', userId)
         .single();
 
@@ -151,6 +151,7 @@ export async function getSettings(userId) {
           googleClientSecret: data.google_client_secret || '',
           resumeName: data.resume_name || '',
           resumeContent: data.resume_content || '',
+          googleConnectedAt: data.google_connected_at || null,
         };
         // Cache locally
         await AsyncStorage.setItem(`${SETTINGS_KEY}_${userId}`, JSON.stringify(mapped));

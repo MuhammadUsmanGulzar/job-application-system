@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
     google_sender_email TEXT,
     google_client_id TEXT,
     google_client_secret TEXT,
+    google_refresh_token TEXT,
+    google_connected_at TIMESTAMPTZ,
     resume_name TEXT,
     resume_content TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
