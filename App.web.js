@@ -392,19 +392,21 @@ export default function AppWeb() {
 
   // Send Email Action
   const handleSendEmail = async (appRecord) => {
-    if (!appRecord?.recipientEmail) {
-      window.alert('Please specify a recipient email to send the application.');
-      return;
-    }
-
     try {
-      await sendEmail({
-        to: appRecord.recipientEmail,
-        subject: `Application for ${appRecord.jobTitle} - ${session?.user?.email || 'Candidate'}`,
-        body: appRecord.generatedEmail,
-        senderEmail: settings.googleSenderEmail,
-        googleClientId: settings.googleClientId,
-        googleClientSecret: settings.googleClientSecret,
+      // Get the applications_email id
+      const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, appRecord.id);
+      const applications_email_id = emailRecord ? emailRecord.id : null;
+
+      if (!applications_email_id) {
+        console.warn('No applications_email id found for this record.');
+      }
+
+      await fetch('https://n8n.flyinvict.com/webhook/42066edc-2634-4eec-9db9-6b20c2932d56', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ applications_email_id }),
       });
 
       // Update status to Applied
@@ -413,8 +415,10 @@ export default function AppWeb() {
       if (updatedList) setApplications(updatedList);
       if (generatedResult?.id === appRecord.id) setGeneratedResult(updated);
       if (selectedRecord?.id === appRecord.id) setSelectedRecord(updated);
+      
+      window.alert('Email triggered successfully!');
     } catch (e) {
-      window.alert('Failed to send email: ' + e.message);
+      window.alert('Failed to trigger webhook: ' + e.message);
     }
   };
 
@@ -1617,7 +1621,7 @@ export default function AppWeb() {
                   style={[styles.actionPill, styles.actionPillPrimary]} 
                   onPress={() => handleSendEmail(selectedRecord)}
                 >
-                  <Text style={styles.actionPillPrimaryText}>Send via Gmail</Text>
+                  <Text style={styles.actionPillPrimaryText}>Send email</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
