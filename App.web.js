@@ -406,7 +406,11 @@ export default function AppWeb() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ applications_email_id }),
+        body: JSON.stringify({ 
+          applications_email_id,
+          user_id: session?.user?.id,
+          application_id: appRecord.id
+        }),
       });
 
       // Update status to Applied
