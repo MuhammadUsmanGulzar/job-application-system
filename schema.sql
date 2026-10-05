@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
     google_client_secret TEXT,
     google_refresh_token TEXT,
     google_connected_at TIMESTAMPTZ,
+    google_oauth_state TEXT,
     resume_name TEXT,
     resume_content TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
