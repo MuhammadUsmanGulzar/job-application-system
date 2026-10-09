@@ -397,43 +397,66 @@ export default function App() {
       }
       setIsGenerating(false);
 
-      // Update the record in 'applications' table with the generated email
+      // 1. Update the record in 'applications' table: status becomes 'Generated'
       if (createdAppId) {
         await updateApplicationGeneratedEmail(userId, createdAppId, generatedContent);
       }
 
-      const finalApp = {
-        id: createdAppId || Date.now().toString(),
-        jobTitle: jobTitle.trim(),
-        companyName: companyName.trim() || 'Hiring Company',
-        recipientEmail: recipientEmail.trim(),
-        requirements: requirements.trim(),
-        description: description.trim(),
-        generatedEmail: generatedContent,
-        status: recipientEmail.trim() ? 'Applied' : 'Generated',
-        createdAt: createdApp?.createdAt || new Date().toISOString(),
-      };
-
+      // 2. Refresh applications directly from 'applications' table in Supabase
       const refreshedList = await getApplications(userId);
       setApplications(refreshedList);
-      setGeneratedResult(finalApp);
+
+      // 3. Set generatedResult strictly using the record from the database
+      const dbRecord = refreshedList.find(a => a.id === createdAppId);
+      if (dbRecord) {
+        setGeneratedResult(dbRecord);
+      } else {
+        setGeneratedResult({
+          id: createdAppId || Date.now().toString(),
+          jobTitle: jobTitle.trim(),
+          companyName: companyName.trim() || 'Hiring Company',
+          recipientEmail: recipientEmail.trim(),
+          requirements: requirements.trim(),
+          description: description.trim(),
+          generatedEmail: generatedContent,
+          status: 'Generated',
+          createdAt: createdApp?.createdAt || new Date().toISOString(),
+        });
+      }
     };
 
     pollIntervalRef.current = setInterval(async () => {
-      // Check application_emails table in Supabase
+      // 1. Check if 'applications' table has updated generated_email directly
+      if (createdAppId) {
+        try {
+          const { data: currentApp } = await supabase
+            .from('applications')
+            .select('*')
+            .eq('id', createdAppId)
+            .eq('user_id', userId)
+            .single();
+
+          if (currentApp && currentApp.generated_email) {
+            await onEmailFound(currentApp.generated_email);
+            return;
+          }
+        } catch (_checkErr) {}
+      }
+
+      // 2. Check application_emails table in Supabase
       const emailRecord = await fetchLatestApplicationEmail(userId, submitTime, createdAppId);
       if (emailRecord && emailRecord.fullEmail) {
         await onEmailFound(emailRecord.fullEmail);
         return;
       }
 
-      // Check if direct response arrived from webhook
+      // 3. Check if direct response arrived from webhook
       if (directWebhookContent && directWebhookContent.trim()) {
         await onEmailFound(directWebhookContent);
         return;
       }
 
-      // Check timeout
+      // 4. Check timeout
       if (Date.now() - pollStartTime > maxPollTimeMs) {
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);

@@ -455,12 +455,15 @@ export async function updateApplicationStatus(userId, applicationId, status) {
     } catch (err) {
       console.warn('Supabase update status error:', err.message);
     }
+
+    // Always return fresh data from applications table in Supabase
+    return await getApplications(userId);
   }
 
-  // 2. Update local cache
+  // 2. Fallback to local cache if no userId
   let updatedList = [];
   try {
-    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const key = `${APPLICATIONS_KEY}_${userId}`;
     const current = await getApplications(userId);
     updatedList = current.map(item => item.id === applicationId 
       ? { ...item, status, appliedAt: status === 'Applied' ? now : item.appliedAt, updatedAt: now } 
@@ -511,12 +514,14 @@ export async function saveApplication(userId, application) {
     } catch (err) {
       console.warn('Supabase save application error:', err.message);
     }
+
+    return await getApplications(userId);
   }
 
-  // 2. Update local cache
+  // 2. Fallback to local cache
   let updated = [];
   try {
-    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const key = `${APPLICATIONS_KEY}_${userId}`;
     const current = await getApplications(userId);
     const existingIndex = current.findIndex(i => i.id === application.id);
     if (existingIndex >= 0) {
@@ -553,15 +558,39 @@ export async function deleteApplication(userId, applicationId) {
     } catch (err) {
       console.warn('Supabase delete application error:', err.message);
     }
+
+    return await getApplications(userId);
   }
 
-  // 2. Delete locally
-  const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+  // 2. Fallback to local cache
+  const key = `${APPLICATIONS_KEY}_${userId}`;
   const current = await getApplications(userId);
   const updated = current.filter(item => item.id !== applicationId);
   await AsyncStorage.setItem(key, JSON.stringify(updated));
 
   return updated;
+}
+
+export async function getApplicationById(userId, applicationId) {
+  if (!userId || !applicationId) return null;
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+    if (isUuid) {
+      const { data, error } = await supabase
+        .from('applications')
+        .select('*')
+        .eq('id', applicationId)
+        .eq('user_id', userId)
+        .single();
+
+      if (!error && data) {
+        return mapApplicationRow(data);
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching application by ID:', err.message);
+  }
+  return null;
 }
 
 /**
