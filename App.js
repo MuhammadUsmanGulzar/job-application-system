@@ -28,7 +28,10 @@ import {
   defaultProfile,
   fetchLatestApplicationEmail,
   createApplication,
-  updateApplicationGeneratedEmail
+  updateApplicationGeneratedEmail,
+  updateApplicationStatus,
+  subscribeToApplications,
+  mapApplicationRow
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
@@ -117,9 +120,11 @@ export default function App() {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  // History State
+  // History State (Synced with Supabase DB)
   const [applications, setApplications] = useState([]);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [isSyncingHistory, setIsSyncingHistory] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState(null);
 
   const loadUserData = React.useCallback(async (userId, userEmail) => {
     const userSettings = await getSettings(userId);
@@ -128,6 +133,7 @@ export default function App() {
     setProfile(userProfile);
     const userApps = await getApplications(userId);
     setApplications(userApps);
+    setLastSyncedTime(new Date());
   }, []);
 
   // Supabase Auth listener
@@ -150,6 +156,61 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, [loadUserData]);
+
+  // Realtime Supabase DB Listener: automatically syncs applications & status changes
+  useEffect(() => {
+    let channel = null;
+    if (session?.user?.id) {
+      channel = subscribeToApplications(session.user.id, (_payload) => {
+        getApplications(session.user.id).then((freshApps) => {
+          setApplications(freshApps);
+          setLastSyncedTime(new Date());
+        });
+
+        if (_payload?.new && _payload.new.id) {
+          const mapped = mapApplicationRow(_payload.new);
+          setSelectedRecord((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped } : prev));
+          setGeneratedResult((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped } : prev));
+        }
+      });
+    }
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [session?.user?.id]);
+
+  const handleSyncHistory = async () => {
+    if (!session?.user?.id) return;
+    setIsSyncingHistory(true);
+    try {
+      const freshApps = await getApplications(session.user.id);
+      setApplications(freshApps);
+      setLastSyncedTime(new Date());
+    } catch (err) {
+      console.warn('Manual sync notice:', err);
+    } finally {
+      setIsSyncingHistory(false);
+    }
+  };
+
+  const handleStatusChange = async (appId, newStatus) => {
+    if (!session?.user?.id || !appId) return;
+    try {
+      const updatedList = await updateApplicationStatus(session.user.id, appId, newStatus);
+      if (updatedList) setApplications(updatedList);
+      if (selectedRecord?.id === appId) {
+        setSelectedRecord((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
+      if (generatedResult?.id === appId) {
+        setGeneratedResult((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
+    } catch (err) {
+      console.warn('Status change notice:', err);
+    }
+  };
 
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
@@ -999,8 +1060,29 @@ export default function App() {
         {activeTab === 'history' && (
           <View>
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Application History</Text>
-              <Text style={styles.subText}>Total Submissions: {applications.length}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <Text style={styles.cardTitle}>Application History</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <Text style={styles.subText}>Total: {applications.length}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#ecfdf5', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 10 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981', marginRight: 4 }} />
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857' }}>Live Synced</Text>
+                    </View>
+                  </View>
+                </View>
+                <TouchableOpacity 
+                  style={[styles.outlineBtn, { paddingVertical: 6, paddingHorizontal: 12 }]}
+                  onPress={handleSyncHistory}
+                  disabled={isSyncingHistory}
+                >
+                  {isSyncingHistory ? (
+                    <ActivityIndicator size="small" color="#2563eb" />
+                  ) : (
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#2563eb' }}>🔄 Sync DB</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
 
             {applications.length === 0 ? (
@@ -1305,9 +1387,29 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
+              <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>
                 {selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient'}
               </Text>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginRight: 2 }}>Status:</Text>
+                {['Draft', 'Generated', 'Applied', 'Interviewing', 'Accepted', 'Rejected'].map((st) => (
+                  <TouchableOpacity
+                    key={st}
+                    style={{
+                      paddingVertical: 3,
+                      paddingHorizontal: 8,
+                      borderRadius: 12,
+                      backgroundColor: selectedRecord.status === st ? '#2563eb' : '#f1f5f9',
+                    }}
+                    onPress={() => handleStatusChange(selectedRecord.id, st)}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: selectedRecord.status === st ? '#ffffff' : '#475569' }}>
+                      {st}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
                 {selectedRecord.isLoadingEmail ? (

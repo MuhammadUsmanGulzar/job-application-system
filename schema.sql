@@ -113,12 +113,22 @@ CREATE TABLE IF NOT EXISTS public.applications (
     requirements TEXT,
     description TEXT,
     generated_email TEXT,
-    status TEXT NOT NULL DEFAULT 'Generating' CHECK (status IN ('Generating', 'Interrupted', 'Failed', 'Generated', 'Applied', 'Interviewing', 'Rejected', 'Accepted')),
+    status TEXT NOT NULL DEFAULT 'Generating' CHECK (status IN ('Draft', 'Generating', 'Interrupted', 'Failed', 'Generated', 'Applied', 'Interviewing', 'Rejected', 'Accepted')),
     resume_id UUID REFERENCES public.resumes(id) ON DELETE SET NULL,
     applied_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure Draft is allowed in pre-existing applications table
+DO $$
+BEGIN
+    ALTER TABLE public.applications DROP CONSTRAINT IF EXISTS applications_status_check;
+    ALTER TABLE public.applications ADD CONSTRAINT applications_status_check 
+        CHECK (status IN ('Draft', 'Generating', 'Interrupted', 'Failed', 'Generated', 'Applied', 'Interviewing', 'Rejected', 'Accepted'));
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
 
 -- Table: APPLICATION_EMAILS (Stores AI-generated emails generated via n8n backend)
 CREATE TABLE IF NOT EXISTS public.application_emails (
@@ -191,6 +201,11 @@ FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 DROP TRIGGER IF EXISTS update_profiles_timestamp ON public.profiles;
 CREATE TRIGGER update_profiles_timestamp
 BEFORE UPDATE ON public.profiles
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_applications_timestamp ON public.applications;
+CREATE TRIGGER update_applications_timestamp
+BEFORE UPDATE ON public.applications
 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- ==============================================================================
@@ -277,6 +292,53 @@ CREATE POLICY "Users can view own applications" ON public.applications FOR SELEC
 
 DROP POLICY IF EXISTS "Users can insert own applications" ON public.applications;
 CREATE POLICY "Users can insert own applications" ON public.applications FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own applications" ON public.applications;
+CREATE POLICY "Users can update own applications" ON public.applications FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own applications" ON public.applications;
+CREATE POLICY "Users can delete own applications" ON public.applications FOR DELETE USING (auth.uid() = user_id);
+
+-- Application Emails Policies
+ALTER TABLE public.application_emails ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own application emails" ON public.application_emails;
+CREATE POLICY "Users can view own application emails" ON public.application_emails FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own application emails" ON public.application_emails;
+CREATE POLICY "Users can insert own application emails" ON public.application_emails FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own application emails" ON public.application_emails;
+CREATE POLICY "Users can update own application emails" ON public.application_emails FOR UPDATE USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own application emails" ON public.application_emails;
+CREATE POLICY "Users can delete own application emails" ON public.application_emails FOR DELETE USING (auth.uid() = user_id);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_applications_user_created ON public.applications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_applications_status ON public.applications(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_application_emails_user_app ON public.application_emails(user_id, application_id);
+CREATE INDEX IF NOT EXISTS idx_application_emails_created ON public.application_emails(user_id, created_at DESC);
+
+-- Enable Realtime for Applications & Emails synchronization
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'applications'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.applications;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'application_emails'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.application_emails;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
 
 -- ==============================================================================
 -- 6. STORAGE BUCKET CONFIGURATION (FOR RESUMES)

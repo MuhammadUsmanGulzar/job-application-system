@@ -251,12 +251,54 @@ export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
 }
 
 // --------------------------------------------------------
-// APPLICATION HISTORY & RECORDS
+// APPLICATION HISTORY & RECORDS (SYNCHRONIZED WITH SUPABASE DB)
 // --------------------------------------------------------
 
+export function mapApplicationRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    jobTitle: row.job_title || '',
+    companyName: row.company_name || 'Hiring Company',
+    recipientEmail: row.recipient_email || '',
+    requirements: row.requirements || '',
+    description: row.description || '',
+    generatedEmail: row.generated_email || '',
+    status: row.status || 'Generating',
+    resumeId: row.resume_id || null,
+    appliedAt: row.applied_at || null,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
 export async function getApplications(userId) {
+  if (!userId) return [];
+
+  // 1. Production-level Supabase query directly from 'applications' table
   try {
-    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (!error && Array.isArray(data)) {
+      const mapped = data.map(mapApplicationRow);
+      // Synchronize local cache
+      const key = `${APPLICATIONS_KEY}_${userId}`;
+      await AsyncStorage.setItem(key, JSON.stringify(mapped));
+      return mapped;
+    } else if (error) {
+      console.warn('Supabase getApplications notice:', error.message);
+    }
+  } catch (e) {
+    console.warn('Network notice fetching applications from Supabase:', e.message);
+  }
+
+  // 2. Fallback to AsyncStorage cache
+  try {
+    const key = `${APPLICATIONS_KEY}_${userId}`;
     const data = await AsyncStorage.getItem(key);
     if (data) {
       return JSON.parse(data);
@@ -269,64 +311,291 @@ export async function getApplications(userId) {
 
 /**
  * Creates and immediately saves the application record in the Supabase 'applications' table
- * on button click.
+ * on button click, returning the real database UUID.
  */
 export async function createApplication(userId, formDetails) {
-  const localId = Date.now().toString();
-  const fallback = {
-    id: localId,
-    jobTitle: formDetails.jobTitle?.trim() || '',
-    companyName: formDetails.companyName?.trim() || 'Hiring Company',
-    recipientEmail: formDetails.recipientEmail?.trim() || '',
-    requirements: formDetails.requirements?.trim() || '',
-    description: formDetails.description?.trim() || '',
-    status: formDetails.recipientEmail?.trim() ? 'Applied' : 'Draft',
-    createdAt: new Date().toISOString(),
+  const insertPayload = {
+    user_id: userId,
+    job_title: formDetails.jobTitle?.trim() || '',
+    company_name: formDetails.companyName?.trim() || 'Hiring Company',
+    recipient_email: formDetails.recipientEmail?.trim() || null,
+    requirements: formDetails.requirements?.trim() || null,
+    description: formDetails.description?.trim() || null,
+    status: 'Generating',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
-  
-  const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
-  const current = await getApplications(userId);
-  const updated = [fallback, ...current.filter(i => i.id !== localId)];
-  await AsyncStorage.setItem(key, JSON.stringify(updated));
 
-  return { success: true, application: fallback, id: localId };
+  let createdApp = null;
+  let createdId = null;
+
+  if (userId) {
+    try {
+      const { data, error } = await supabase
+        .from('applications')
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (!error && data) {
+        createdApp = mapApplicationRow(data);
+        createdId = data.id;
+      } else if (error) {
+        console.warn('Supabase insert application error:', error.message);
+      }
+    } catch (err) {
+      console.warn('Exception creating application in Supabase:', err.message);
+    }
+  }
+
+  // Fallback if offline or DB error
+  if (!createdApp) {
+    createdId = typeof crypto !== 'undefined' && crypto.randomUUID 
+      ? crypto.randomUUID() 
+      : 'app-' + Date.now().toString() + '-' + Math.random().toString(36).substring(2, 9);
+    createdApp = {
+      id: createdId,
+      jobTitle: formDetails.jobTitle?.trim() || '',
+      companyName: formDetails.companyName?.trim() || 'Hiring Company',
+      recipientEmail: formDetails.recipientEmail?.trim() || '',
+      requirements: formDetails.requirements?.trim() || '',
+      description: formDetails.description?.trim() || '',
+      generatedEmail: '',
+      status: 'Generating',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  // Update local cache
+  try {
+    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const current = await getApplications(userId);
+    const updated = [createdApp, ...current.filter(i => i.id !== createdId)];
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+  } catch (_e) {}
+
+  return { success: true, application: createdApp, id: createdId };
 }
 
 /**
- * Updates the generated_email field of an existing application record
+ * Updates the generated_email field of an existing application record in Supabase & cache
  */
 export async function updateApplicationGeneratedEmail(userId, applicationId, generatedEmail) {
   if (!applicationId) return;
 
+  // 1. Sync to Supabase
+  if (userId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+      if (isUuid) {
+        const { error } = await supabase
+          .from('applications')
+          .update({
+            generated_email: generatedEmail,
+            status: 'Generated',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', applicationId)
+          .eq('user_id', userId);
+
+        if (error) {
+          console.warn('Error updating generated email in Supabase:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase update generated email notice:', err.message);
+    }
+  }
+
+  // 2. Update local cache
   try {
-    // Update local cache
     const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
     const current = await getApplications(userId);
-    const updated = current.map(item => item.id === applicationId ? { ...item, generatedEmail } : item);
+    const updated = current.map(item => item.id === applicationId 
+      ? { ...item, generatedEmail, status: 'Generated', updatedAt: new Date().toISOString() } 
+      : item
+    );
     await AsyncStorage.setItem(key, JSON.stringify(updated));
   } catch (err) {
-    console.warn('Error updating application generated email:', err);
+    console.warn('Error updating local cache for generated email:', err);
   }
 }
 
+/**
+ * Updates status of an application in Supabase DB & local cache (e.g. Applied, Interviewing, Rejected)
+ */
+export async function updateApplicationStatus(userId, applicationId, status) {
+  if (!applicationId) return [];
+
+  const now = new Date().toISOString();
+  const updatePayload = {
+    status,
+    updated_at: now,
+  };
+  if (status === 'Applied') {
+    updatePayload.applied_at = now;
+  }
+
+  // 1. Sync directly to Supabase applications table
+  if (userId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+      if (isUuid) {
+        const { error } = await supabase
+          .from('applications')
+          .update(updatePayload)
+          .eq('id', applicationId)
+          .eq('user_id', userId);
+
+        if (error) {
+          console.warn('Error updating application status in Supabase:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase update status error:', err.message);
+    }
+  }
+
+  // 2. Update local cache
+  let updatedList = [];
+  try {
+    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const current = await getApplications(userId);
+    updatedList = current.map(item => item.id === applicationId 
+      ? { ...item, status, appliedAt: status === 'Applied' ? now : item.appliedAt, updatedAt: now } 
+      : item
+    );
+    await AsyncStorage.setItem(key, JSON.stringify(updatedList));
+  } catch (err) {
+    console.warn('Error updating local cache for status:', err);
+  }
+
+  return updatedList;
+}
+
 export async function saveApplication(userId, application) {
-  // 1. Update local storage
-  const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
-  const current = await getApplications(userId);
-  const updated = [application, ...current.filter(item => item.id !== application.id)];
-  await AsyncStorage.setItem(key, JSON.stringify(updated));
+  if (!application?.id) return [];
+
+  const now = new Date().toISOString();
+  const dbPayload = {
+    job_title: application.jobTitle,
+    company_name: application.companyName || 'Hiring Company',
+    recipient_email: application.recipientEmail || null,
+    requirements: application.requirements || null,
+    description: application.description || null,
+    generated_email: application.generatedEmail || null,
+    status: application.status || 'Generated',
+    updated_at: now,
+  };
+
+  if (application.status === 'Applied') {
+    dbPayload.applied_at = application.appliedAt || now;
+  }
+
+  // 1. Sync to Supabase
+  if (userId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(application.id);
+      if (isUuid) {
+        const { error } = await supabase
+          .from('applications')
+          .update(dbPayload)
+          .eq('id', application.id)
+          .eq('user_id', userId);
+
+        if (error) {
+          console.warn('Error saving application in Supabase:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase save application error:', err.message);
+    }
+  }
+
+  // 2. Update local cache
+  let updated = [];
+  try {
+    const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
+    const current = await getApplications(userId);
+    const existingIndex = current.findIndex(i => i.id === application.id);
+    if (existingIndex >= 0) {
+      updated = current.map(i => i.id === application.id ? { ...i, ...application, updatedAt: now } : i);
+    } else {
+      updated = [application, ...current];
+    }
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Error saving application locally:', e);
+  }
 
   return updated;
 }
 
 export async function deleteApplication(userId, applicationId) {
-  // 1. Delete locally
+  if (!applicationId) return [];
+
+  // 1. Delete in Supabase
+  if (userId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+      if (isUuid) {
+        const { error } = await supabase
+          .from('applications')
+          .delete()
+          .eq('id', applicationId)
+          .eq('user_id', userId);
+
+        if (error) {
+          console.warn('Error deleting application in Supabase:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase delete application error:', err.message);
+    }
+  }
+
+  // 2. Delete locally
   const key = userId ? `${APPLICATIONS_KEY}_${userId}` : APPLICATIONS_KEY;
   const current = await getApplications(userId);
   const updated = current.filter(item => item.id !== applicationId);
   await AsyncStorage.setItem(key, JSON.stringify(updated));
 
   return updated;
+}
+
+/**
+ * Connect to Supabase Realtime channel for live updates to applications
+ */
+export function subscribeToApplications(userId, onEvent) {
+  if (!userId) return null;
+
+  try {
+    const channel = supabase
+      .channel(`realtime_applications_${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'applications',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          if (onEvent) onEvent(payload);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Realtime applications channel connected for user', userId);
+        }
+      });
+
+    return channel;
+  } catch (err) {
+    console.warn('Could not establish realtime channel:', err.message);
+    return null;
+  }
 }
 
 // --------------------------------------------------------

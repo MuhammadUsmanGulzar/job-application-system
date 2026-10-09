@@ -24,10 +24,25 @@ import {
   defaultProfile,
   fetchLatestApplicationEmail,
   createApplication,
-  updateApplicationGeneratedEmail
+  updateApplicationGeneratedEmail,
+  updateApplicationStatus,
+  subscribeToApplications,
+  mapApplicationRow
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
+
+export const getStatusBadgeStyle = (status) => {
+  switch (status) {
+    case 'Applied': return { backgroundColor: '#dcfce7', color: '#166534', border: '#86efac' };
+    case 'Interviewing': return { backgroundColor: '#ede9fe', color: '#6b21a8', border: '#c4b5fd' };
+    case 'Accepted': return { backgroundColor: '#ccfbf1', color: '#115e59', border: '#5eead4' };
+    case 'Rejected': return { backgroundColor: '#fee2e2', color: '#991b1b', border: '#fca5a5' };
+    case 'Generating': return { backgroundColor: '#fef3c7', color: '#92400e', border: '#fde68a' };
+    case 'Generated': return { backgroundColor: '#dbeafe', color: '#1e40af', border: '#bfdbfe' };
+    default: return { backgroundColor: '#f1f5f9', color: '#475569', border: '#cbd5e1' };
+  }
+};
 
 export default function AppWeb() {
   const { width } = useWindowDimensions();
@@ -119,10 +134,12 @@ export default function AppWeb() {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  // Applications History State
+  // Applications History State (Synced with Supabase DB)
   const [applications, setApplications] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [isSyncingHistory, setIsSyncingHistory] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState(null);
 
   const loadUserData = React.useCallback(async (userId, userEmail) => {
     const userSettings = await getSettings(userId);
@@ -131,6 +148,7 @@ export default function AppWeb() {
     setProfile(userProfile);
     const userApps = await getApplications(userId);
     setApplications(userApps);
+    setLastSyncedTime(new Date());
   }, []);
 
   // Auth session listener
@@ -153,6 +171,61 @@ export default function AppWeb() {
 
     return () => subscription.unsubscribe();
   }, [loadUserData]);
+
+  // Realtime Supabase DB Listener: automatically syncs applications & status changes
+  useEffect(() => {
+    let channel = null;
+    if (session?.user?.id) {
+      channel = subscribeToApplications(session.user.id, (_payload) => {
+        getApplications(session.user.id).then((freshApps) => {
+          setApplications(freshApps);
+          setLastSyncedTime(new Date());
+        });
+
+        if (_payload?.new && _payload.new.id) {
+          const mapped = mapApplicationRow(_payload.new);
+          setSelectedRecord((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped } : prev));
+          setGeneratedResult((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped } : prev));
+        }
+      });
+    }
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [session?.user?.id]);
+
+  const handleSyncHistory = async () => {
+    if (!session?.user?.id) return;
+    setIsSyncingHistory(true);
+    try {
+      const freshApps = await getApplications(session.user.id);
+      setApplications(freshApps);
+      setLastSyncedTime(new Date());
+    } catch (err) {
+      console.warn('Manual sync notice:', err);
+    } finally {
+      setIsSyncingHistory(false);
+    }
+  };
+
+  const handleStatusChange = async (appId, newStatus) => {
+    if (!session?.user?.id || !appId) return;
+    try {
+      const updatedList = await updateApplicationStatus(session.user.id, appId, newStatus);
+      if (updatedList) setApplications(updatedList);
+      if (selectedRecord?.id === appId) {
+        setSelectedRecord((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
+      if (generatedResult?.id === appId) {
+        setGeneratedResult((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
+    } catch (err) {
+      console.warn('Status change notice:', err);
+    }
+  };
 
   // Handle OAuth redirect from URL parameters
   useEffect(() => {
@@ -1229,18 +1302,38 @@ export default function AppWeb() {
             <View style={styles.historyHeader}>
               <View>
                 <Text style={styles.cardTitle}>Application History & Records</Text>
-                <Text style={styles.cardDescription}>
-                  Track all past job submissions, pitches, and responses.
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <Text style={styles.cardDescription}>
+                    Track all past job submissions, pitches, and responses.
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#ecfdf5', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 12, borderWidth: 1, borderColor: '#a7f3d0' }}>
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#10b981', marginRight: 6 }} />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#047857' }}>Live Synced with DB</Text>
+                  </View>
+                </View>
               </View>
 
-              <TextInput
-                style={[styles.webInput, { width: 300, marginBottom: 0 }]}
-                placeholder="🔍 Search company, title, email..."
-                value={historySearch}
-                onChangeText={setHistorySearch}
-                placeholderTextColor="#9ca3af"
-              />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <TextInput
+                  style={[styles.webInput, { width: 240, marginBottom: 0 }]}
+                  placeholder="🔍 Search company, title, email..."
+                  value={historySearch}
+                  onChangeText={setHistorySearch}
+                  placeholderTextColor="#9ca3af"
+                />
+
+                <TouchableOpacity 
+                  style={[styles.tableActionBtn, { backgroundColor: '#f8fafc', paddingVertical: 8, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                  onPress={handleSyncHistory}
+                  disabled={isSyncingHistory}
+                >
+                  {isSyncingHistory ? (
+                    <ActivityIndicator size="small" color="#2563eb" />
+                  ) : (
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#2563eb' }}>🔄 Sync DB</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Quick Stats */}
@@ -1256,8 +1349,14 @@ export default function AppWeb() {
                 <Text style={styles.statLabel}>Emails Sent</Text>
               </View>
               <View style={styles.statCard}>
+                <Text style={[styles.statNumber, { color: '#7c3aed' }]}>
+                  {applications.filter(a => a.status === 'Interviewing' || a.status === 'Accepted').length}
+                </Text>
+                <Text style={styles.statLabel}>Interviewing / Accepted</Text>
+              </View>
+              <View style={styles.statCard}>
                 <Text style={[styles.statNumber, { color: '#d97706' }]}>
-                  {applications.filter(a => a.status === 'Generated' || a.status === 'Draft').length}
+                  {applications.filter(a => a.status === 'Generated' || a.status === 'Draft' || a.status === 'Generating').length}
                 </Text>
                 <Text style={styles.statLabel}>Drafts / Prepared</Text>
               </View>
@@ -1283,41 +1382,65 @@ export default function AppWeb() {
               </View>
             ) : (
               <View style={styles.tableCard}>
-                {filteredApps.map((item) => (
-                  <View key={item.id} style={styles.tableRow}>
-                    <View style={{ flex: 2 }}>
-                      <Text style={styles.rowTitle}>{item.jobTitle}</Text>
-                      <Text style={styles.rowCompany}>{item.companyName} • {item.recipientEmail || 'No recipient email'}</Text>
-                      <Text style={styles.rowDate}>
-                        Applied: {new Date(item.createdAt).toLocaleDateString()} at {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </Text>
-                    </View>
-
-                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
-                      <View style={[styles.badgePill, item.status === 'Applied' ? styles.badgeApplied : styles.badgeDraft]}>
-                        <Text style={[styles.badgePillText, item.status === 'Applied' ? styles.badgeAppliedText : styles.badgeDraftText]}>
-                          {item.status}
+                {filteredApps.map((item) => {
+                  const badgeStyle = getStatusBadgeStyle(item.status);
+                  return (
+                    <View key={item.id} style={styles.tableRow}>
+                      <View style={{ flex: 2 }}>
+                        <Text style={styles.rowTitle}>{item.jobTitle}</Text>
+                        <Text style={styles.rowCompany}>{item.companyName} • {item.recipientEmail || 'No recipient email'}</Text>
+                        <Text style={styles.rowDate}>
+                          Created: {new Date(item.createdAt).toLocaleDateString()} at {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {item.appliedAt ? ` • Applied: ${new Date(item.appliedAt).toLocaleDateString()}` : ''}
                         </Text>
                       </View>
-                      
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                        <TouchableOpacity 
-                          style={styles.tableActionBtn}
-                          onPress={() => handleOpenRecord(item)}
-                        >
-                          <Text style={styles.tableActionBtnText}>View</Text>
-                        </TouchableOpacity>
 
-                        <TouchableOpacity 
-                          style={[styles.tableActionBtn, { borderColor: '#fca5a5' }]}
-                          onPress={() => handleDeleteRecord(item.id)}
-                        >
-                          <Text style={[styles.tableActionBtnText, { color: '#ef4444' }]}>Delete</Text>
-                        </TouchableOpacity>
+                      <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                        <View style={{ marginBottom: 6 }}>
+                          <select
+                            value={item.status || 'Generated'}
+                            onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                            style={{
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              borderRadius: '16px',
+                              border: `1px solid ${badgeStyle.border}`,
+                              backgroundColor: badgeStyle.backgroundColor,
+                              color: badgeStyle.color,
+                              fontSize: '12px',
+                              fontWeight: '700',
+                              outline: 'none',
+                            }}
+                          >
+                            <option value="Generating">Generating</option>
+                            <option value="Generated">Generated</option>
+                            <option value="Applied">Applied</option>
+                            <option value="Interviewing">Interviewing</option>
+                            <option value="Accepted">Accepted</option>
+                            <option value="Rejected">Rejected</option>
+                            <option value="Draft">Draft</option>
+                          </select>
+                        </View>
+                        
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                          <TouchableOpacity 
+                            style={styles.tableActionBtn}
+                            onPress={() => handleOpenRecord(item)}
+                          >
+                            <Text style={styles.tableActionBtnText}>View</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity 
+                            style={[styles.tableActionBtn, { borderColor: '#fca5a5' }]}
+                            onPress={() => handleDeleteRecord(item.id)}
+                          >
+                            <Text style={[styles.tableActionBtnText, { color: '#ef4444' }]}>Delete</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             )}
           </View>
@@ -1724,9 +1847,40 @@ export default function AppWeb() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
               <View style={styles.modalHeader}>
-                <View>
+                <View style={{ flex: 1, marginRight: 12 }}>
                   <Text style={styles.modalTitle}>{selectedRecord.jobTitle}</Text>
                   <Text style={styles.modalSub}>{selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient email'}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Status:</Text>
+                    <select
+                      value={selectedRecord.status || 'Generated'}
+                      onChange={(e) => handleStatusChange(selectedRecord.id, e.target.value)}
+                      style={{
+                        cursor: 'pointer',
+                        padding: '4px 10px',
+                        borderRadius: '16px',
+                        border: `1px solid ${getStatusBadgeStyle(selectedRecord.status).border}`,
+                        backgroundColor: getStatusBadgeStyle(selectedRecord.status).backgroundColor,
+                        color: getStatusBadgeStyle(selectedRecord.status).color,
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        outline: 'none',
+                      }}
+                    >
+                      <option value="Generating">Generating</option>
+                      <option value="Generated">Generated</option>
+                      <option value="Applied">Applied</option>
+                      <option value="Interviewing">Interviewing</option>
+                      <option value="Accepted">Accepted</option>
+                      <option value="Rejected">Rejected</option>
+                      <option value="Draft">Draft</option>
+                    </select>
+                    {selectedRecord.appliedAt && (
+                      <Text style={{ fontSize: 11, color: '#059669', fontWeight: '500' }}>
+                        Applied on {new Date(selectedRecord.appliedAt).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
                 </View>
                 <TouchableOpacity onPress={() => setSelectedRecord(null)} style={styles.closeBtn}>
                   <Text style={styles.closeBtnText}>Close</Text>
