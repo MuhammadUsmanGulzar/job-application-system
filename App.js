@@ -80,7 +80,16 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
+  const [isSending, setIsSending] = useState(false);
   const pollIntervalRef = useRef(null);
+
+  const clearApplicationForm = () => {
+    setJobTitle('');
+    setCompanyName('');
+    setRecipientEmail('');
+    setRequirements('');
+    setDescription('');
+  };
 
   // Stopwatch timer for n8n AI email generation
   useEffect(() => {
@@ -378,30 +387,51 @@ export default function App() {
     }, 2000);
   };
 
-  // Send Email
+  // Send Email Action
   const handleSendEmail = async (appRecord) => {
-    if (!appRecord?.recipientEmail) {
-      Alert.alert('Missing Recipient', 'Please enter a recipient email.');
-      return;
-    }
-
+    if (!appRecord || isSending) return;
+    setIsSending(true);
     try {
-      await sendEmail({
-        to: appRecord.recipientEmail,
-        subject: `Application for ${appRecord.jobTitle} - ${session?.user?.email || 'Candidate'}`,
-        body: appRecord.generatedEmail,
-        senderEmail: settings.googleSenderEmail,
-        googleClientId: settings.googleClientId,
-        googleClientSecret: settings.googleClientSecret,
+      // Get the applications_email id
+      const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, appRecord.id);
+      const applications_email_id = emailRecord ? emailRecord.id : null;
+
+      if (!applications_email_id) {
+        console.warn('No applications_email id found for this record.');
+      }
+
+      await fetch('https://n8n.flyinvict.com/webhook/42066edc-2634-4eec-9db9-6b20c2932d56', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          applications_email_id,
+          user_id: session?.user?.id,
+          application_id: appRecord.id
+        }),
       });
 
+      // Update status to Applied in database
       const updated = { ...appRecord, status: 'Applied' };
       const updatedList = await saveApplication(session?.user?.id, updated);
       if (updatedList) setApplications(updatedList);
-      if (generatedResult?.id === appRecord.id) setGeneratedResult(updated);
-      if (selectedRecord?.id === appRecord.id) setSelectedRecord(updated);
+
+      // Clear the form fields and clear that generated email section
+      if (generatedResult?.id === appRecord.id || !selectedRecord) {
+        clearApplicationForm();
+        setGeneratedResult(null);
+      }
+
+      if (selectedRecord?.id === appRecord.id) {
+        setSelectedRecord(updated);
+      }
+
+      Alert.alert('Success', 'Email triggered successfully!');
     } catch (e) {
-      Alert.alert('Send Error', e.message);
+      Alert.alert('Send Error', 'Failed to trigger webhook: ' + e.message);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -775,6 +805,15 @@ export default function App() {
                   <Text style={styles.primaryBtnText}>Generate application</Text>
                 )}
               </TouchableOpacity>
+
+              {(jobTitle || companyName || recipientEmail || requirements || description) && !isGenerating ? (
+                <TouchableOpacity 
+                  style={{ marginTop: 10, alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10 }}
+                  onPress={clearApplicationForm}
+                >
+                  <Text style={{ color: '#6b7280', fontSize: 13, fontWeight: '500' }}>Clear form</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {/* Active n8n Generating Loader Card */}
@@ -803,10 +842,15 @@ export default function App() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <Text style={styles.cardTitle}>2. Generated Application</Text>
                   <TouchableOpacity 
-                    style={styles.sendActionBtn}
+                    style={[styles.sendActionBtn, isSending && { opacity: 0.6 }]}
                     onPress={() => handleSendEmail(generatedResult)}
+                    disabled={isSending}
                   >
-                    <Text style={styles.sendActionBtnText}>Send email</Text>
+                    {isSending ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.sendActionBtnText}>Send email</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
 
@@ -1279,10 +1323,15 @@ export default function App() {
 
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
                 <TouchableOpacity 
-                  style={[styles.primaryBtn, { flex: 1 }]}
+                  style={[styles.primaryBtn, { flex: 1 }, isSending && styles.disabledBtn]}
                   onPress={() => handleSendEmail(selectedRecord)}
+                  disabled={isSending}
                 >
-                  <Text style={styles.primaryBtnText}>Send email</Text>
+                  {isSending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>Send email</Text>
+                  )}
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={[styles.outlineBtn, { flex: 1 }]}

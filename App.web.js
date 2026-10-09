@@ -82,7 +82,16 @@ export default function AppWeb() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
+  const [isSending, setIsSending] = useState(false);
   const pollIntervalRef = useRef(null);
+
+  const clearApplicationForm = () => {
+    setJobTitle('');
+    setCompanyName('');
+    setRecipientEmail('');
+    setRequirements('');
+    setDescription('');
+  };
 
   // Stopwatch timer for n8n AI email generation
   useEffect(() => {
@@ -448,6 +457,8 @@ export default function AppWeb() {
 
   // Send Email Action
   const handleSendEmail = async (appRecord) => {
+    if (!appRecord || isSending) return;
+    setIsSending(true);
     try {
       // Get the applications_email id
       const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, appRecord.id);
@@ -469,16 +480,26 @@ export default function AppWeb() {
         }),
       });
 
-      // Update status to Applied
+      // Update status to Applied in database
       const updated = { ...appRecord, status: 'Applied' };
       const updatedList = await saveApplication(session?.user?.id, updated);
       if (updatedList) setApplications(updatedList);
-      if (generatedResult?.id === appRecord.id) setGeneratedResult(updated);
-      if (selectedRecord?.id === appRecord.id) setSelectedRecord(updated);
+
+      // Clear the form fields and clear the generated email section
+      if (generatedResult?.id === appRecord.id || !selectedRecord) {
+        clearApplicationForm();
+        setGeneratedResult(null);
+      }
+
+      if (selectedRecord?.id === appRecord.id) {
+        setSelectedRecord(updated);
+      }
       
       window.alert('Email triggered successfully!');
     } catch (e) {
       window.alert('Failed to trigger webhook: ' + e.message);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -933,6 +954,15 @@ export default function AppWeb() {
                     <Text style={styles.webPrimaryButtonText}>Generate application</Text>
                   )}
                 </TouchableOpacity>
+
+                {(jobTitle || companyName || recipientEmail || requirements || description) && !isGenerating ? (
+                  <TouchableOpacity 
+                    style={{ marginTop: 10, alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10 }}
+                    onPress={clearApplicationForm}
+                  >
+                    <Text style={{ color: '#6b7280', fontSize: 13, fontWeight: '500' }}>Clear form</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
 
               {/* Output Preview Card */}
@@ -972,10 +1002,15 @@ export default function AppWeb() {
                           <Text style={styles.actionPillText}>Copy</Text>
                         </TouchableOpacity>
                         <TouchableOpacity 
-                          style={[styles.actionPill, styles.actionPillPrimary]}
+                          style={[styles.actionPill, styles.actionPillPrimary, isSending && styles.disabledButton]}
                           onPress={() => handleSendEmail(generatedResult)}
+                          disabled={isSending}
                         >
-                          <Text style={styles.actionPillPrimaryText}>Send</Text>
+                          {isSending ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={styles.actionPillPrimaryText}>Send</Text>
+                          )}
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -1719,10 +1754,15 @@ export default function AppWeb() {
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={[styles.actionPill, styles.actionPillPrimary]} 
+                  style={[styles.actionPill, styles.actionPillPrimary, isSending && styles.disabledButton]} 
                   onPress={() => handleSendEmail(selectedRecord)}
+                  disabled={isSending}
                 >
-                  <Text style={styles.actionPillPrimaryText}>Send email</Text>
+                  {isSending ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.actionPillPrimaryText}>Send email</Text>
+                  )}
                 </TouchableOpacity>
 
                 <TouchableOpacity 
