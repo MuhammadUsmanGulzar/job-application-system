@@ -245,11 +245,11 @@ export default function AppWeb() {
   }, [session]);
 
   const handleConnectGmail = async () => {
-    if (!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail) return;
-    setGoogleFeedback('Starting connection...');
+    setGoogleFeedback('Opening Google authentication...');
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
-      const response = await fetch(`${process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://lbnohysxebihrmeqmszy.supabase.co'}/functions/v1/gmail-oauth`, {
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://msyzzsoiuzwwsksfvddj.supabase.co';
+      const response = await fetch(`${supabaseUrl}/functions/v1/gmail-oauth`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -264,7 +264,7 @@ export default function AppWeb() {
         setGoogleFeedback(`Error: ${data.error || 'Failed to start OAuth'}`);
       }
     } catch (err) {
-      setGoogleFeedback('Network error starting OAuth');
+      setGoogleFeedback('Network error starting OAuth: ' + err.message);
     }
   };
 
@@ -1637,246 +1637,63 @@ export default function AppWeb() {
             <View style={styles.webCard}>
               <View style={styles.sectionHeader}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>3. Google Console API & Gmail Account</Text>
+                  <Text style={styles.sectionTitle}>3. Gmail Account Connection</Text>
                   <Text style={styles.cardDescription}>
-                    Connect your Gmail to send application emails directly to recruiters.
+                    Connect your Gmail with 1 click. The AI agent will automatically send job applications on your behalf.
                   </Text>
                 </View>
-                <TouchableOpacity 
-                  style={styles.guideToggleBtn}
-                  onPress={() => setShowGmailGuide(!showGmailGuide)}
-                >
-                  <Text style={styles.guideToggleBtnText}>
-                    {showGmailGuide ? 'Hide guide' : 'Connection guide'}
-                  </Text>
-                </TouchableOpacity>
               </View>
 
-              {/* Interactive Visual Guide */}
-              {showGmailGuide && (
-                <View style={styles.guideBox}>
-                  <View style={styles.guideTabBar}>
-                    <TouchableOpacity 
-                      style={[styles.guideTabItem, guideMethod === 'appPassword' && styles.guideTabItemActive]}
-                      onPress={() => setGuideMethod('appPassword')}
-                    >
-                      <Text style={[styles.guideTabItemText, guideMethod === 'appPassword' && styles.guideTabItemTextActive]}>
-                        App password (recommended)
+              <View style={{ marginTop: 8, padding: 16, backgroundColor: settings.googleConnectedAt ? '#f0fdf4' : '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: settings.googleConnectedAt ? '#bbf7d0' : '#e2e8f0' }}>
+                {!settings.googleConnectedAt ? (
+                  <View style={{ flexDirection: 'column', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#94a3b8' }} />
+                      <Text style={{ fontSize: 14, color: '#475569', fontWeight: '500' }}>
+                        Status: <Text style={{ fontWeight: '700', color: '#64748b' }}>Not Connected</Text>
                       </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                      style={[styles.guideTabItem, guideMethod === 'oauth' && styles.guideTabItemActive]}
-                      onPress={() => setGuideMethod('oauth')}
-                    >
-                      <Text style={[styles.guideTabItemText, guideMethod === 'oauth' && styles.guideTabItemTextActive]}>
-                        Google Cloud OAuth
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {guideMethod === 'appPassword' ? (
-                    <View style={styles.guideContent}>
-                      <Text style={styles.guideLead}>
-                        The fastest & most reliable method. Takes 2 minutes and allows sending application emails directly from your Gmail:
-                      </Text>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>1</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>Turn on 2-Step Verification</Text>
-                          <Text style={styles.stepDesc}>
-                            Make sure 2-Step Verification is active on your Google Account.
-                          </Text>
-                          <TouchableOpacity 
-                            style={styles.linkPill}
-                            onPress={() => window.open('https://myaccount.google.com/security', '_blank')}
-                          >
-                            <Text style={styles.linkPillText}>Open Google security</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>2</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>Generate App Password</Text>
-                          <Text style={styles.stepDesc}>
-                            Visit the Google App Passwords page. Name it <Text style={{ fontWeight: '700' }}>Job Apply Pro</Text> and click <Text style={{ fontWeight: '700' }}>Create</Text>.
-                          </Text>
-                          <TouchableOpacity 
-                            style={styles.linkPill}
-                            onPress={() => window.open('https://myaccount.google.com/apppasswords', '_blank')}
-                          >
-                            <Text style={styles.linkPillText}>Open app passwords</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>3</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>Paste Below & Save</Text>
-                          <Text style={styles.stepDesc}>
-                            Copy the 16-character code (e.g. <Text style={{ fontFamily: 'monospace' }}>abcd efgh ijkl mnop</Text>) into the <Text style={{ fontWeight: '700' }}>Client Secret / App Password</Text> field below, and enter your Gmail address.
-                          </Text>
-                        </View>
-                      </View>
                     </View>
-                  ) : (
-                    <View style={styles.guideContent}>
-                      <Text style={styles.guideLead}>
-                        For advanced/cloud users using Google Cloud OAuth 2.0 Client credentials:
-                      </Text>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>1</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>Create Project in Google Cloud</Text>
-                          <Text style={styles.stepDesc}>
-                            Go to Google Cloud Console and create a project named <Text style={{ fontWeight: '700' }}>Job Apply System</Text>.
-                          </Text>
-                          <TouchableOpacity 
-                            style={styles.linkPill}
-                            onPress={() => window.open('https://console.cloud.google.com/projectcreate', '_blank')}
-                          >
-                            <Text style={styles.linkPillText}>Open Google Cloud</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>2</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>Enable Gmail API</Text>
-                          <Text style={styles.stepDesc}>
-                            Under <Text style={{ fontWeight: '700' }}>APIs & Services, then Library</Text>, search for <Text style={{ fontWeight: '700' }}>Gmail API</Text> and click <Text style={{ fontWeight: '700' }}>Enable</Text>.
-                          </Text>
-                          <TouchableOpacity 
-                            style={styles.linkPill}
-                            onPress={() => window.open('https://console.cloud.google.com/apis/library/gmail.googleapis.com', '_blank')}
-                          >
-                            <Text style={styles.linkPillText}>Enable Gmail API</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>3</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>OAuth Consent & Scope</Text>
-                          <Text style={styles.stepDesc}>
-                            Set up OAuth consent screen with user type <Text style={{ fontWeight: '700' }}>External</Text> and add the scope <Text style={{ fontFamily: 'monospace' }}>https://www.googleapis.com/auth/gmail.send</Text>.
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.guideStepRow}>
-                        <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>4</Text></View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.stepTitle}>Create Credentials</Text>
-                          <Text style={styles.stepDesc}>
-                            Under <Text style={{ fontWeight: '700' }}>Credentials</Text>, create an <Text style={{ fontWeight: '700' }}>OAuth client ID (Web Application)</Text>.
-                            Under <Text style={{ fontWeight: '700' }}>Authorized redirect URIs</Text>, add:
-                          </Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, padding: 6, backgroundColor: '#f1f5f9', borderRadius: 6 }}>
-                            <Text style={{ fontFamily: 'monospace', fontSize: 12, flex: 1 }} numberOfLines={1}>
-                              {process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://<your-project>.supabase.co'}/functions/v1/gmail-oauth
-                            </Text>
-                            <TouchableOpacity onPress={() => handleCopy(`${process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://<your-project>.supabase.co'}/functions/v1/gmail-oauth`)}>
-                              <Text style={{ color: '#4f46e5', fontSize: 12, fontWeight: '600' }}>Copy</Text>
-                            </TouchableOpacity>
-                          </View>
-                          <Text style={[styles.stepDesc, { marginTop: 4 }]}>
-                            Then copy your Client ID & Client Secret below.
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Sender Gmail Address</Text>
-                <TextInput
-                  style={styles.webInput}
-                  placeholder="yourname@gmail.com"
-                  value={settings.googleSenderEmail}
-                  onChangeText={(val) => setSettings(prev => ({ ...prev, googleSenderEmail: val }))}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
-                  <Text style={styles.label}>Google Console Client ID (Optional for App Password)</Text>
-                  <TextInput
-                    style={styles.webInput}
-                    placeholder="xxxx-xxxx.apps.googleusercontent.com"
-                    value={settings.googleClientId}
-                    onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientId: val }))}
-                    placeholderTextColor="#9ca3af"
-                  />
-                </View>
-
-                <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Google Client Secret OR 16-Char App Password *</Text>
-                  <TextInput
-                    style={styles.webInput}
-                    placeholder="16-character App Password or Client Secret"
-                    value={settings.googleClientSecret}
-                    onChangeText={(val) => setSettings(prev => ({ ...prev, googleClientSecret: val }))}
-                    secureTextEntry
-                    placeholderTextColor="#9ca3af"
-                  />
-                </View>
-              </View>
-
-              <View style={[styles.cardActionRow, { flexWrap: 'wrap', gap: 12 }]}>
-                <TouchableOpacity 
-                  style={[styles.sectionSaveBtn, isSavingGoogle && styles.disabledButton]}
-                  onPress={() => handleSaveSection('google')}
-                  disabled={isSavingGoogle}
-                >
-                  {isSavingGoogle ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
-                  ) : (
-                    <Text style={styles.sectionSaveBtnText}>Save Gmail settings</Text>
-                  )}
-                </TouchableOpacity>
-
-                <View style={{ flex: 1, minWidth: 300, flexDirection: 'row', alignItems: 'center' }}>
-                  {!settings.googleConnectedAt ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, color: '#64748b' }}>
+                      Click below to link your Gmail account securely. No client IDs or passwords required.
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 }}>
                       <TouchableOpacity
-                        style={[styles.sectionSaveBtn, { backgroundColor: '#4285F4' }, (!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail) && styles.disabledButton]}
+                        style={[styles.sectionSaveBtn, { backgroundColor: '#1a73e8', paddingHorizontal: 20 }]}
                         onPress={handleConnectGmail}
-                        disabled={!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail}
                       >
-                        <Text style={styles.sectionSaveBtnText}>Connect Gmail</Text>
+                        <Text style={[styles.sectionSaveBtnText, { fontWeight: '600' }]}>Connect with Gmail</Text>
                       </TouchableOpacity>
-                      {(!settings.googleClientId || !settings.googleClientSecret || !settings.googleSenderEmail) && (
-                        <Text style={{ marginLeft: 8, fontSize: 12, color: '#64748b' }}>Fill fields above first</Text>
-                      )}
-                      <Text style={{ marginLeft: 8, fontSize: 12, color: '#64748b' }}>Status: Not connected</Text>
+                      {googleFeedback ? <Text style={styles.sectionFeedbackText}>{googleFeedback}</Text> : null}
                     </View>
-                  ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-                      <Text style={{ fontSize: 13, color: '#10b981' }}>Connected as {settings.googleSenderEmail} on {new Date(settings.googleConnectedAt).toLocaleDateString()}</Text>
-                      <TouchableOpacity onPress={handleConnectGmail} style={{ padding: 6, backgroundColor: '#f1f5f9', borderRadius: 4 }}>
-                        <Text style={{ fontSize: 12, fontWeight: '600' }}>Reconnect</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={handleDisconnectGmail} style={{ padding: 6, backgroundColor: '#fee2e2', borderRadius: 4 }}>
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#ef4444' }}>Disconnect</Text>
-                      </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'column', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#10b981' }} />
+                      <Text style={{ fontSize: 14, color: '#166534', fontWeight: '600' }}>
+                        Connected as {settings.googleSenderEmail || session?.user?.email}
+                      </Text>
                     </View>
-                  )}
-                </View>
-
-                {googleFeedback ? <Text style={styles.sectionFeedbackText}>{googleFeedback}</Text> : null}
+                    <Text style={{ fontSize: 12, color: '#15803d' }}>
+                      Active connection since {new Date(settings.googleConnectedAt).toLocaleDateString()}
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                      <TouchableOpacity
+                        onPress={handleConnectGmail}
+                        style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#e2e8f0', borderRadius: 6 }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#1e293b' }}>Reconnect Account</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={handleDisconnectGmail}
+                        style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#fee2e2', borderRadius: 6 }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#dc2626' }}>Disconnect</Text>
+                      </TouchableOpacity>
+                      {googleFeedback ? <Text style={styles.sectionFeedbackText}>{googleFeedback}</Text> : null}
+                    </View>
+                  </View>
+                )}
               </View>
             </View>
           </View>
