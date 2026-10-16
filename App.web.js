@@ -42,6 +42,65 @@ export const getStatusBadgeStyle = (status) => {
     case 'Generated': return { backgroundColor: '#dbeafe', color: '#1e40af', border: '#bfdbfe' };
     default: return { backgroundColor: '#f1f5f9', color: '#475569', border: '#cbd5e1' };
   }
+export const SAMPLE_HIRING_POST = `[Techies Global](https://www.linkedin.com/company/techies-global/) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁 (𝗣𝗮𝗿𝘁 𝘁𝗶𝗺𝗲 𝗡𝗶𝗴𝗵𝘁 𝗦𝗵𝗶𝗳𝘁 𝟭 𝗮𝗺 𝘁𝗼 𝟱 𝗮𝗺) On-Site𝗞𝗲𝘆 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗶𝗯𝗶𝗹𝗶𝘁𝗶𝗲𝘀 • Research and evaluate emerging AI tools, platforms, and technologies relevant to digital marketing. • Implement AI-powered workflows to improve productivity and reduce repetitive manual tasks. • Develop and optimize prompts for ChatGPT, Claude, Gemini, and other generative AI platforms. • Use AI for content generation, content optimization, research, ideation, and quality improvement. • Assist the marketing team with AI-driven SEO, keyword research, competitor analysis, and content strategies. • Develop AI-based automation workflows using tools such as Make, Zapier, n8n, or similar platforms. • Identify opportunities to automate internal agency processes and client deliverables. • Experiment with AI agents, custom GPTs, chatbots, and AI assistants. • Integrate AI tools with existing marketing and business workflows where appropriate. • Monitor AI-generated content for accuracy, originality, brand alignment, and quality. • Stay updated with the latest developments in generative AI, LLMs, AI automation, and marketing technology. • Train and guide team members on effective use of AI tools. • Maintain documentation of AI workflows, prompts, automations, and best practices. • Support management in identifying new AI-powered services that can be offered to clients.𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱 𝗦𝗸𝗶𝗹𝗹𝘀 & 𝗤𝘂𝗮𝗹𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻𝘀Bachelor's degree in Computer Science, Artificial Intelligence, Software Engineering, IT, Marketing Technology, or a related field is preferred.𝗔𝗽𝗽𝗹𝘆 𝗮𝘁: 𝗺𝗮𝗻𝗮𝗴𝗶𝗻𝗴𝗱𝗶𝗿𝗲𝗰𝘁𝗼𝗿@𝘁𝗲𝗰𝗵𝗶𝗲𝘀𝗴𝗹𝗼𝗯𝗮𝗹.𝗰𝗼𝗺𝗪𝗵𝗮𝘁𝘀𝗮𝗽𝗽: 𝟬𝟯𝟬𝟴 𝟰𝟬𝟭𝟵𝟬𝟱𝟳𝗟𝗼𝗰𝗮𝘁𝗶𝗼𝗻: Wapda Town Phase 1 Lahore.`;
+
+export const parseRawHiringPost = (raw) => {
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  // 1. Normalize unicode characters (NFKD converts mathematical bold/sans chars into standard ASCII)
+  let text = raw.normalize('NFKD');
+  text = text.replace(/•/g, '\n• ').replace(/·/g, '\n· ');
+
+  // 2. Recipient Email extraction (handles glued text like .comWhatsapp: 0308...)
+  const emailMatch = text.match(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|co\.uk|co|io|pk|edu|gov|tech|ai|dev|global)/i
+  );
+  const recipientEmail = emailMatch ? emailMatch[0].trim() : '';
+
+  // 3. Company Name extraction
+  let companyName = '';
+  const mdMatch = text.match(/\[([^\]]+)\]\(https?:\/\/[^\)]+\)/);
+  if (mdMatch) {
+    companyName = mdMatch[1].trim();
+  } else {
+    const compMatch = text.match(/(?:at|company|with)\s+([A-Z][A-Za-z0-9\s&]{2,25})/);
+    if (compMatch) {
+      companyName = compMatch[1].trim();
+    }
+  }
+
+  // 4. Job Title extraction
+  let jobTitle = '';
+  const titleMatch = text.match(
+    /(?:looking for|hiring(?:\s+for)?|position(?:\s+of)?|role(?:\s+of)?|opening for)\s+([A-Za-z0-9\s()\/,+-]+?)(?=(?:\s+On-Site|\s+Remote|\s+Hybrid|\s+Location|Key Responsibilities|Responsibilities|Requirements|\.|\n|$))/i
+  );
+  if (titleMatch) {
+    jobTitle = titleMatch[1].trim();
+  } else {
+    const firstLine = text.split('\n')[0];
+    jobTitle = firstLine.substring(0, 50).trim();
+  }
+
+  // 5. Requirements extraction
+  let requirements = '';
+  const reqMatch = text.match(
+    /(?:Key Responsibilities|Responsibilities|Required Skills|Requirements)[:\s]*([\s\S]*?)(?=(?:Apply at|Location|Whatsapp|Salary|$))/i
+  );
+  if (reqMatch) {
+    requirements = reqMatch[1].trim();
+  } else {
+    requirements = text.slice(0, 500);
+  }
+
+  return {
+    jobTitle: jobTitle || 'AI Expert',
+    companyName: companyName || 'Hiring Company',
+    recipientEmail: recipientEmail || '',
+    requirements: requirements.trim(),
+    description: text.trim(),
+  };
 };
 
 export default function AppWeb() {
@@ -88,6 +147,12 @@ export default function AppWeb() {
   const [showGmailGuide, setShowGmailGuide] = useState(true);
   const [guideMethod, setGuideMethod] = useState('appPassword');
 
+  // Raw Job Post AI Parser Agent State
+  const [rawJobPost, setRawJobPost] = useState('');
+  const [isParsingRawPost, setIsParsingRawPost] = useState(false);
+  const [parsedSummary, setParsedSummary] = useState(null);
+  const [rawPostMessage, setRawPostMessage] = useState('');
+
   // Job Application Form State
   const [jobTitle, setJobTitle] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -106,6 +171,80 @@ export default function AppWeb() {
     setRecipientEmail('');
     setRequirements('');
     setDescription('');
+    setParsedSummary(null);
+    setRawPostMessage('');
+  };
+
+  const handleLoadSamplePost = () => {
+    setRawJobPost(SAMPLE_HIRING_POST);
+    setRawPostMessage('Loaded sample Techies Global job posting.');
+    setParsedSummary(null);
+  };
+
+  const handleClearRawPost = () => {
+    setRawJobPost('');
+    setParsedSummary(null);
+    setRawPostMessage('');
+  };
+
+  const handleParseAndPopulate = async (andSubmit = false) => {
+    if (!rawJobPost.trim()) {
+      window.alert('Please paste a raw job posting first.');
+      return;
+    }
+
+    setIsParsingRawPost(true);
+    setRawPostMessage('');
+
+    let extracted = null;
+
+    // 1. Attempt LangGraph Python server endpoint if active locally
+    try {
+      const resp = await fetch('http://localhost:8000/api/agent/parse-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          raw_text: rawJobPost,
+          user_id: session?.user?.id || '',
+          send_webhook: false,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        extracted = {
+          jobTitle: data.job_title || '',
+          companyName: data.company_name || '',
+          recipientEmail: data.recipient_email || '',
+          requirements: data.requirements || '',
+          description: data.description || rawJobPost,
+        };
+      }
+    } catch (_agentErr) {
+      // Local agent offline, fallback to client-side LangGraph parsing logic
+    }
+
+    // 2. Client-side LangGraph logic fallback
+    if (!extracted) {
+      extracted = parseRawHiringPost(rawJobPost);
+    }
+
+    if (extracted) {
+      setJobTitle(extracted.jobTitle);
+      setCompanyName(extracted.companyName);
+      setRecipientEmail(extracted.recipientEmail);
+      setRequirements(extracted.requirements);
+      setDescription(extracted.description);
+      setParsedSummary(extracted);
+      setRawPostMessage(`Extracted: ${extracted.jobTitle} at ${extracted.companyName} (${extracted.recipientEmail || 'No email'})`);
+
+      if (andSubmit) {
+        setIsParsingRawPost(false);
+        await handleGenerateAndApply(extracted);
+        return;
+      }
+    }
+
+    setIsParsingRawPost(false);
   };
 
   // Stopwatch timer for n8n AI email generation
@@ -364,8 +503,14 @@ export default function AppWeb() {
   };
 
   // Submit Application, Immediately Save to 'applications' table, Start Timer/Loader & Trigger n8n
-  const handleGenerateAndApply = async () => {
-    if (!jobTitle.trim()) {
+  const handleGenerateAndApply = async (overrideFields = null) => {
+    const activeJobTitle = (overrideFields?.jobTitle || jobTitle || '').trim();
+    const activeCompanyName = (overrideFields?.companyName || companyName || '').trim();
+    const activeRecipientEmail = (overrideFields?.recipientEmail || recipientEmail || '').trim();
+    const activeRequirements = (overrideFields?.requirements || requirements || '').trim();
+    const activeDescription = (overrideFields?.description || description || '').trim();
+
+    if (!activeJobTitle) {
       window.alert('Please enter a Job Title.');
       return;
     }
@@ -387,11 +532,11 @@ export default function AppWeb() {
     let createdAppId = null;
     try {
       const result = await createApplication(userId, {
-        jobTitle: jobTitle.trim(),
-        companyName: companyName.trim(),
-        recipientEmail: recipientEmail.trim(),
-        requirements: requirements.trim(),
-        description: description.trim(),
+        jobTitle: activeJobTitle,
+        companyName: activeCompanyName,
+        recipientEmail: activeRecipientEmail,
+        requirements: activeRequirements,
+        description: activeDescription,
       });
       createdApp = result.application;
       createdAppId = result.id;
@@ -424,14 +569,14 @@ export default function AppWeb() {
       user_id: userId,
       applicationID: createdAppId,
       application_id: createdAppId,
-      jobTitle: jobTitle.trim(),
-      job_title: jobTitle.trim(),
-      companyName: companyName.trim(),
-      company_name: companyName.trim(),
-      recipientEmail: recipientEmail.trim(),
-      recipient_email: recipientEmail.trim(),
-      requirements: requirements.trim(),
-      description: description.trim(),
+      jobTitle: activeJobTitle,
+      job_title: activeJobTitle,
+      companyName: activeCompanyName,
+      company_name: activeCompanyName,
+      recipientEmail: activeRecipientEmail,
+      recipient_email: activeRecipientEmail,
+      requirements: activeRequirements,
+      description: activeDescription,
     };
 
     let directWebhookContent = '';
@@ -984,6 +1129,97 @@ export default function AppWeb() {
         {/* ================= TAB 1: APPLY FOR JOB ================= */}
         {activeTab === 'apply' && (
           <View style={styles.pageContainer}>
+
+            {/* AI Agent Raw Job Post Intake Card */}
+            <View style={styles.aiIntakeCard}>
+              <View style={styles.aiIntakeHeader}>
+                <View style={styles.aiIntakeTitleRow}>
+                  <View style={styles.aiAgentPill}>
+                    <Text style={styles.aiAgentPillText}>🤖 LangGraph AI Agent</Text>
+                  </View>
+                  <Text style={styles.aiIntakeTitle}>Quick-Fill from Raw Hiring Post</Text>
+                </View>
+                <Text style={styles.aiIntakeSubtitle}>
+                  Paste unformatted text from LinkedIn, WhatsApp, or job boards. The AI Agent normalizes unicode fonts, extracts key details into the Job Application Form, and dispatches directly to your webhook.
+                </Text>
+              </View>
+
+              <TextInput
+                style={styles.aiTextarea}
+                placeholder='Paste raw hiring post (e.g. "[Techies Global](...) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁... Apply at: managingdirector@techiesglobal.com...")'
+                value={rawJobPost}
+                onChangeText={setRawJobPost}
+                multiline
+                placeholderTextColor="#94a3b8"
+              />
+
+              <View style={styles.aiButtonRow}>
+                <TouchableOpacity
+                  style={[styles.aiPrimaryBtn, isParsingRawPost && styles.disabledButton]}
+                  onPress={() => handleParseAndPopulate(false)}
+                  disabled={isParsingRawPost}
+                >
+                  {isParsingRawPost ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.aiPrimaryBtnText}>✨ Auto-Fill Form</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.aiWebhookBtn, (isParsingRawPost || isGenerating) && styles.disabledButton]}
+                  onPress={() => handleParseAndPopulate(true)}
+                  disabled={isParsingRawPost || isGenerating}
+                >
+                  <Text style={styles.aiWebhookBtnText}>🚀 Auto-Fill & Send to Webhook</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.aiSampleBtn}
+                  onPress={handleLoadSamplePost}
+                >
+                  <Text style={styles.aiSampleBtnText}>📋 Load Techies Global Sample</Text>
+                </TouchableOpacity>
+
+                {rawJobPost ? (
+                  <TouchableOpacity
+                    style={styles.aiClearBtn}
+                    onPress={handleClearRawPost}
+                  >
+                    <Text style={styles.aiClearBtnText}>Clear</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {rawPostMessage ? (
+                <View style={styles.aiFeedbackBanner}>
+                  <Text style={styles.aiFeedbackText}>✓ {rawPostMessage}</Text>
+                </View>
+              ) : null}
+
+              {parsedSummary ? (
+                <View style={styles.aiExtractedSummary}>
+                  <View style={styles.aiSummaryTag}>
+                    <Text style={styles.aiSummaryTagLabel}>Company:</Text>
+                    <Text style={styles.aiSummaryTagValue}>{parsedSummary.companyName}</Text>
+                  </View>
+                  <View style={styles.aiSummaryTag}>
+                    <Text style={styles.aiSummaryTagLabel}>Role:</Text>
+                    <Text style={styles.aiSummaryTagValue}>{parsedSummary.jobTitle}</Text>
+                  </View>
+                  <View style={styles.aiSummaryTag}>
+                    <Text style={styles.aiSummaryTagLabel}>Email:</Text>
+                    <Text style={styles.aiSummaryTagValue}>{parsedSummary.recipientEmail || 'None'}</Text>
+                  </View>
+                  <View style={styles.aiSummaryTag}>
+                    <Text style={styles.aiSummaryTagLabel}>Requirements:</Text>
+                    <Text style={styles.aiSummaryTagValue}>
+                      {parsedSummary.requirements ? `${parsedSummary.requirements.length} chars` : '0'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
 
             <View style={[styles.splitLayout, isCompact && styles.splitLayoutCompact]}>
               {/* Form Card */}
@@ -2633,4 +2869,169 @@ const styles = StyleSheet.create({
     borderTopColor: '#f1f5f9',
     paddingTop: 16,
   },
+
+  // AI Intake Card Styles
+  aiIntakeCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 22,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderTopWidth: 4,
+    borderTopColor: '#2563eb',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+  },
+  aiIntakeHeader: {
+    marginBottom: 14,
+  },
+  aiIntakeTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+    flexWrap: 'wrap',
+  },
+  aiAgentPill: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 20,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+  },
+  aiAgentPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1d4ed8',
+  },
+  aiIntakeTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  aiIntakeSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 19,
+  },
+  aiTextarea: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 13,
+    color: '#0f172a',
+    minHeight: 105,
+    maxHeight: 180,
+    marginBottom: 14,
+    outlineStyle: 'none',
+  },
+  aiButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  aiPrimaryBtn: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  aiPrimaryBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  aiWebhookBtn: {
+    backgroundColor: '#059669',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  aiWebhookBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  aiSampleBtn: {
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    cursor: 'pointer',
+  },
+  aiSampleBtnText: {
+    color: '#92400e',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  aiClearBtn: {
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    cursor: 'pointer',
+  },
+  aiClearBtnText: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  aiFeedbackBanner: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 12,
+  },
+  aiFeedbackText: {
+    color: '#065f46',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  aiExtractedSummary: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  aiSummaryTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    gap: 5,
+  },
+  aiSummaryTagLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  aiSummaryTagValue: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#0f172a',
+  },
 });
+
