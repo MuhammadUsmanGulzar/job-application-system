@@ -484,17 +484,38 @@ export default function App() {
         console.warn('No applications_email id found for this record.');
       }
 
-      await fetch('https://n8n.flyinvict.com/webhook/42066edc-2634-4eec-9db9-6b20c2932d56', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          applications_email_id,
-          user_id: session?.user?.id,
-          application_id: appRecord.id
-        }),
-      });
+      if (settings?.googleConnectedAt) {
+        const recipient = appRecord.recipient_email;
+        if (!recipient) {
+          throw new Error('Recipient email address is missing for this application.');
+        }
+
+        const subject = emailRecord?.subject || `Job Application: ${appRecord.job_title} - ${profile?.fullName || 'Applicant'}`;
+        const body = emailRecord?.body || appRecord.generated_email || 'Please find my job application attached.';
+
+        await sendEmail({
+          to: recipient,
+          subject,
+          body,
+          applicationId: appRecord.id,
+          applicationEmailId: applications_email_id,
+        });
+
+        Alert.alert('Success', 'Application email sent directly via your connected Gmail!');
+      } else {
+        await fetch('https://n8n.flyinvict.com/webhook/42066edc-2634-4eec-9db9-6b20c2932d56', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            applications_email_id,
+            user_id: session?.user?.id,
+            application_id: appRecord.id
+          }),
+        });
+        Alert.alert('Success', 'Email triggered successfully via webhook!');
+      }
 
       // Update status to Applied in database
       const updated = { ...appRecord, status: 'Applied' };
@@ -510,10 +531,8 @@ export default function App() {
       if (selectedRecord?.id === appRecord.id) {
         setSelectedRecord(updated);
       }
-
-      Alert.alert('Success', 'Email triggered successfully!');
     } catch (e) {
-      Alert.alert('Send Error', 'Failed to trigger webhook: ' + e.message);
+      Alert.alert('Send Error', 'Failed to send email: ' + e.message);
     } finally {
       setIsSending(false);
     }
