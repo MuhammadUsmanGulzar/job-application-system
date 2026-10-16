@@ -565,13 +565,14 @@ export default function AppWeb() {
       }
 
       if (settings?.googleConnectedAt) {
-        const recipient = appRecord.recipient_email;
+        const recipient = appRecord.recipientEmail || appRecord.recipient_email;
         if (!recipient) {
           throw new Error('Recipient email address is missing for this application.');
         }
 
-        const subject = emailRecord?.subject || `Job Application: ${appRecord.job_title} - ${profile?.fullName || 'Applicant'}`;
-        const body = emailRecord?.body || appRecord.generated_email || 'Please find my job application attached.';
+        const jobTitle = appRecord.jobTitle || appRecord.job_title || 'Software Developer';
+        const subject = emailRecord?.subject || `Job Application: ${jobTitle} - ${profile?.fullName || 'Applicant'}`;
+        const body = emailRecord?.body || appRecord.generatedEmail || appRecord.generated_email || 'Please find my job application attached.';
 
         await sendEmail({
           to: recipient,
