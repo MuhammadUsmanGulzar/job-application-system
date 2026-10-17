@@ -40,7 +40,7 @@ import {
   syncResumeFromBucket,
   getResumeFileUrl
 } from './services/storage';
-import { LLM_PROVIDERS_CONFIG } from './services/ai';
+import { LLM_PROVIDERS_CONFIG, performLlmJobParse, performLlmEmailGeneration } from './services/ai';
 import { sendEmail } from './services/email';
 import {
   initSession,
@@ -285,6 +285,7 @@ export default function App() {
   const [isSavingResume, setIsSavingResume] = useState(false);
   const [isSavingLlm, setIsSavingLlm] = useState(false);
   const [isSavingGoogle, setIsSavingGoogle] = useState(false);
+  const [showLlmApiKey, setShowLlmApiKey] = useState(false);
   const [showGmailGuide, setShowGmailGuide] = useState(true);
   const [guideMethod, setGuideMethod] = useState('appPassword');
 
@@ -390,33 +391,55 @@ export default function App() {
 
     let extracted = null;
 
-    // 1. Attempt LangGraph Python server endpoint if active locally (parse-only, never save to DB or trigger n8n here)
-    try {
-      const resp = await fetch('http://localhost:8000/api/agent/parse-job', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          raw_text: rawJobPost,
-          user_id: '',
-          send_webhook: false,
-          save_to_db: false,
-        }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        extracted = {
-          jobTitle: data.job_title || '',
-          companyName: data.company_name || '',
-          recipientEmail: data.recipient_email || '',
-          requirements: data.requirements || '',
-          description: data.description || rawJobPost,
-        };
+    // 1. Direct LLM Job Parsing Agent using user's LLM API if key is present
+    if (settings.llmApiKey && settings.llmApiKey.trim().length > 5) {
+      try {
+        const aiParsed = await performLlmJobParse({
+          rawText: rawJobPost,
+          provider: settings.llmProvider,
+          apiKey: settings.llmApiKey,
+          model: settings.llmModel,
+        });
+        if (aiParsed && aiParsed.jobTitle) {
+          extracted = aiParsed;
+        }
+      } catch (parseErr) {
+        console.warn('Direct LLM job parsing notice:', parseErr.message);
       }
-    } catch (_agentErr) {
-      // Local agent offline, fallback to client-side LangGraph parsing logic
     }
 
-    // 2. Client-side LangGraph logic fallback
+    // 2. Attempt LangGraph Python server endpoint if active locally
+    if (!extracted) {
+      try {
+        const resp = await fetch('http://localhost:8000/api/agent/parse-job', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            raw_text: rawJobPost,
+            user_id: '',
+            send_webhook: false,
+            save_to_db: false,
+            llm_provider: settings.llmProvider,
+            llm_api_key: settings.llmApiKey,
+            llm_model: settings.llmModel,
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          extracted = {
+            jobTitle: data.job_title || '',
+            companyName: data.company_name || '',
+            recipientEmail: data.recipient_email || '',
+            requirements: data.requirements || '',
+            description: data.description || rawJobPost,
+          };
+        }
+      } catch (_agentErr) {
+        // Local agent offline, fallback to client-side LangGraph parsing logic
+      }
+    }
+
+    // 3. Client-side LangGraph logic fallback
     if (!extracted) {
       extracted = parseRawHiringPost(rawJobPost);
     }
@@ -1146,7 +1169,42 @@ export default function App() {
       setSelectedRecord(finalResult);
     };
 
-    // 5. Trigger the n8n webhook asynchronously
+    // 5. Direct Email Generation Agent using user's LLM API if key is present
+    if (settings.llmApiKey && settings.llmApiKey.trim().length > 5) {
+      try {
+        const userProfile = await getProfile(userId, session?.user?.email || '');
+        const emailResult = await performLlmEmailGeneration({
+          jobTitle: activeJobTitle,
+          companyName: activeCompanyName,
+          recipientEmail: activeRecipientEmail,
+          requirements: activeRequirements,
+          description: activeDescription,
+          resumeContent: settings.resumeContent || '',
+          atsReport: atsReport || null,
+          profile: userProfile,
+          provider: settings.llmProvider,
+          apiKey: settings.llmApiKey,
+          model: settings.llmModel,
+        });
+
+        if (emailResult.success && emailResult.generatedEmail) {
+          // Asynchronously notify webhook
+          fetch(n8nWebhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...webhookPayload, generated_email: emailResult.generatedEmail }),
+          }).catch(() => {});
+
+          await onEmailFound(emailResult.generatedEmail);
+          showSuccess(`Application email generated via ${settings.llmProvider}!`, 'Email Generated');
+          return;
+        }
+      } catch (genErr) {
+        console.warn('Direct LLM email generation error, falling back to background webhook:', genErr.message);
+      }
+    }
+
+    // 6. Trigger the n8n webhook asynchronously
     fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: {
@@ -2242,6 +2300,51 @@ export default function App() {
                     </TouchableOpacity>
                   );
                 })}
+              </View>
+
+              {/* API Key Input Field */}
+              <View style={{ marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.label}>{settings.llmProvider || 'OpenAI'} API Key (Optional)</Text>
+                  {LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI']?.helpUrl ? (
+                    <TouchableOpacity
+                      onPress={() => Linking.openURL(LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI'].helpUrl)}
+                    >
+                      <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700', textDecorationLine: 'underline' }}>
+                        Get {settings.llmProvider || 'OpenAI'} Key
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', position: 'relative' }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, paddingRight: 65, fontFamily: 'monospace' }]}
+                    placeholder={LLM_PROVIDERS_CONFIG[settings.llmProvider || 'OpenAI']?.placeholder || 'Enter API Key'}
+                    value={settings.llmApiKey || ''}
+                    onChangeText={(text) => setSettings(prev => ({ ...prev, llmApiKey: text.trim() }))}
+                    secureTextEntry={!showLlmApiKey}
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                  <TouchableOpacity
+                    style={{
+                      position: 'absolute',
+                      right: 10,
+                      paddingVertical: 6,
+                      paddingHorizontal: 8,
+                      backgroundColor: '#f1f5f9',
+                      borderRadius: 6,
+                    }}
+                    onPress={() => setShowLlmApiKey(prev => !prev)}
+                  >
+                    <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600' }}>
+                      {showLlmApiKey ? 'Hide' : 'Show'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                  All 4 agents (Parser, ATS Match, Resume Tailor, Email Generator) will directly execute with your {settings.llmProvider || 'OpenAI'} API.
+                </Text>
               </View>
 
               <TouchableOpacity 

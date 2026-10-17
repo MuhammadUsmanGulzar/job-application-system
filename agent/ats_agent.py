@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from resume_tailor_agent import extract_resume_from_bucket, get_supabase_client
+from llm_client import call_user_llm, parse_json_from_llm_response
 
 
 SKILL_CATALOG = [
@@ -53,6 +54,9 @@ class AtsAgentState(TypedDict, total=False):
     resume_name: str
     stage: str
     save_to_db: bool
+    llm_provider: Optional[str]
+    llm_api_key: Optional[str]
+    llm_model: Optional[str]
     required_skills: List[str]
     resume_skills: List[str]
     matched_skills: List[str]
@@ -156,12 +160,87 @@ def score_resume_node(state: AtsAgentState) -> AtsAgentState:
     if state.get("status") == "FAILED":
         return state
 
+    logs = list(state.get("logs", []))
     raw_resume = state.get("raw_resume") or ""
     resume_lower = raw_resume.lower()
     job_text = " ".join([state.get("requirements") or "", state.get("job_description") or ""])
     required_skills = state.get("required_skills", [])
     matched_skills = state.get("matched_skills", [])
     resume_skills = state.get("resume_skills", [])
+
+    # 0. Direct User LLM ATS Scoring if API key is provided
+    llm_api_key = (state.get("llm_api_key") or "").strip()
+    if llm_api_key:
+        try:
+            prompt = f"""You are a Fortune-500 Enterprise Applicant Tracking System (ATS) and Senior Hiring Match Evaluator.
+Analyze the candidate's resume strictly against the target job posting.
+
+Target Job:
+Role: {state.get("job_title", "Software Engineer")}
+Company: {state.get("company_name", "Hiring Company")}
+Requirements & Details:
+{job_text}
+
+Candidate Resume:
+\"\"\"{raw_resume}\"\"\"
+
+Return ONLY a valid JSON object matching this schema:
+{{
+  "score": integer between 0 and 100,
+  "scoreBreakdown": {{
+    "skills": integer between 0 and 100,
+    "title": integer between 0 and 100,
+    "experience": integer between 0 and 100,
+    "education": integer between 0 and 100,
+    "formatting": integer between 0 and 100
+  }},
+  "matchedSkills": ["Skill 1", "Skill 2"],
+  "missingSkills": ["Missing Skill 1", "Missing Skill 2"],
+  "suggestions": [
+    {{
+      "priority": "high",
+      "title": "Concise suggestion headline",
+      "detail": "Actionable guidance referencing job requirements",
+      "action": "skills"
+    }}
+  ],
+  "summary": "2-3 sentence executive evaluation summary explaining the score."
+}}
+"""
+            raw_json = call_user_llm(
+                prompt=prompt,
+                system_prompt="You evaluate resumes with realistic ATS algorithms, outputting pure JSON with zero conversational filler.",
+                provider=state.get("llm_provider", "OpenAI"),
+                api_key=llm_api_key,
+                model=state.get("llm_model", ""),
+                temperature=0.1,
+                json_mode=True,
+            )
+            parsed = parse_json_from_llm_response(raw_json)
+            if isinstance(parsed.get("score"), (int, float)):
+                overall_score = _clamp(parsed["score"])
+                breakdown = parsed.get("scoreBreakdown") or {}
+                norm_breakdown = {
+                    "skills": _clamp(breakdown.get("skills", overall_score)),
+                    "title": _clamp(breakdown.get("title", overall_score)),
+                    "experience": _clamp(breakdown.get("experience", overall_score)),
+                    "education": _clamp(breakdown.get("education", 80)),
+                    "formatting": _clamp(breakdown.get("formatting", 85)),
+                }
+                logs.append(f"Evaluated ATS score via user's LLM ({state.get('llm_provider', 'OpenAI')}): {overall_score}%")
+                return {
+                    **state,
+                    "score": overall_score,
+                    "score_breakdown": norm_breakdown,
+                    "matched_skills": parsed.get("matchedSkills") or matched_skills,
+                    "missing_skills": parsed.get("missingSkills") or [],
+                    "suggestions": parsed.get("suggestions") or [],
+                    "summary": parsed.get("summary") or f"Resume ATS alignment evaluated at {overall_score}%.",
+                    "status": "SCORED",
+                    "logs": logs,
+                }
+        except Exception as e:
+            logs.append(f"User LLM ATS evaluation notice ({str(e)}), falling back to rule engine.")
 
     # Balanced skill scoring
     if required_skills:
@@ -257,6 +336,16 @@ def recommend_improvements_node(state: AtsAgentState) -> AtsAgentState:
         "detail": "Strengthen relevant bullets with outcomes such as speed, revenue, reliability, users, or time saved.",
         "action": "impact",
     })
+
+    # If LLM already generated detailed suggestions & summary, preserve them
+    existing_suggestions = state.get("suggestions")
+    existing_summary = state.get("summary")
+    if existing_suggestions and len(existing_suggestions) > 0 and existing_summary:
+        return {
+            **state,
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "status": "RECOMMENDED",
+        }
 
     summary = (
         "Strong match. Focus on proof, clarity, and final review before applying."

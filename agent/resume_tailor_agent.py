@@ -6,6 +6,7 @@ from typing_extensions import TypedDict
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from langgraph.graph import StateGraph, START, END
+from llm_client import call_user_llm, parse_json_from_llm_response
 
 load_dotenv()
 
@@ -32,6 +33,9 @@ class ResumeTailorState(TypedDict, total=False):
     resume_name: Optional[str]
     save_to_db: bool
     ats_report: Dict[str, Any]
+    llm_provider: Optional[str]
+    llm_api_key: Optional[str]
+    llm_model: Optional[str]
     
     # Processed Fields
     extracted_keywords: List[str]
@@ -276,7 +280,7 @@ Software Engineer | AI & Full-Stack Developer
 email: applicant@example.com | Phone: +1 555-0199 | Location: Remote
 
 PROFESSIONAL SUMMARY
-Passion-driven Software Engineer with expertise in building scalable web applications, integrating AI agents, and automating business workflows.
+Passionate Software Engineer with expertise in building scalable web applications, integrating AI agents, and automating business workflows.
 
 CORE COMPETENCIES & TECHNICAL SKILLS
 • Programming: Python, JavaScript, TypeScript, HTML/CSS
@@ -376,6 +380,79 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
             missing_skills.append(kw)
 
     logs.append(f"Skill Alignment: {len(matched_skills)} matched, {len(missing_skills)} to integrate/highlight.")
+
+    # 0. Direct User LLM Resume Tailoring if API key is provided
+    llm_api_key = (state.get("llm_api_key") or "").strip()
+    if llm_api_key:
+        try:
+            req_details = " ".join([state.get("requirements") or "", state.get("job_description") or ""])
+            report_suggestions = ats_report.get("suggestions") or []
+            sugg_text = "\n".join([f"- {s.get('detail') if isinstance(s, dict) else str(s)}" for s in report_suggestions[:5]])
+
+            prompt = f"""You are an elite Executive Resume Strategist and ATS Optimization Specialist.
+Rewrite and optimize the candidate's existing resume to achieve maximum ATS compatibility and recruiter impact for the target role.
+
+Target Job:
+Role: {job_title}
+Company: {company_name}
+Requirements:
+{req_details}
+
+ATS Recommendations:
+{sugg_text or "Align technical skills and experience bullets with target responsibilities."}
+
+Original Resume:
+\"\"\"{raw}\"\"\"
+
+CRITICAL RULES:
+1. Do NOT use ASCII decorative borders or horizontal lines (e.g. NEVER output lines of '═════' or '-----').
+2. Use standard uppercase section titles:
+   [NAME]
+   [HEADLINE / TARGET ROLE]
+   [CONTACT INFO]
+   PROFESSIONAL SUMMARY
+   CORE COMPETENCIES & TECHNICAL SKILLS
+   PROFESSIONAL EXPERIENCE
+   PROJECTS (if present)
+   EDUCATION
+3. Begin every experience bullet point with a strong action verb (e.g., Engineered, Architected, Spearheaded, Automated).
+4. Emphasize verified skills only. Never fabricate employers, universities, or credentials.
+5. Return ONLY a valid JSON object matching this schema:
+{{
+  "tailoredResume": "Complete optimized plain text resume",
+  "matchedSkills": ["Skill 1", "Skill 2"],
+  "missingSkills": ["Gap 1", "Gap 2"],
+  "enhancements": ["Action 1 taken", "Action 2 taken", "Action 3 taken"]
+}}
+"""
+            raw_json = call_user_llm(
+                prompt=prompt,
+                system_prompt="You optimize resumes for maximum ATS indexing. Return pure JSON with zero markdown fluff.",
+                provider=state.get("llm_provider", "OpenAI"),
+                api_key=llm_api_key,
+                model=state.get("llm_model", ""),
+                temperature=0.2,
+                json_mode=True,
+            )
+            parsed = parse_json_from_llm_response(raw_json)
+            if parsed.get("tailoredResume") and len(parsed["tailoredResume"]) > 200:
+                cleaned_resume = parsed["tailoredResume"].replace("═", "").strip()
+                logs.append(f"Successfully optimized resume via user's LLM ({state.get('llm_provider', 'OpenAI')})")
+                return {
+                    **state,
+                    "tailored_resume": cleaned_resume,
+                    "matched_skills": parsed.get("matchedSkills") or matched_skills,
+                    "missing_skills": parsed.get("missingSkills") or missing_skills,
+                    "enhancements": parsed.get("enhancements") or [
+                        f"Targeted headline and professional summary for {job_title} at {company_name}.",
+                        "Optimized technical competencies and ATS keywords.",
+                        "Standardized clean formatting without non-standard symbols.",
+                    ],
+                    "status": "TAILORED",
+                    "logs": logs,
+                }
+        except Exception as e:
+            logs.append(f"User LLM resume optimization notice: {str(e)}. Falling back to template tailor engine.")
 
     # Emphasize verified skills only. Missing keywords become recommendations, never fabricated claims.
     report_matched = ats_report.get("matchedSkills") or ats_report.get("matched_skills") or []

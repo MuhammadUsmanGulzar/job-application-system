@@ -1,5 +1,6 @@
 import os
 import argparse
+import re
 from typing import Any, Dict
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from state import ApplicationAgentState
 from job_parser_agent import job_parser_agent, JobParserState
 from resume_tailor_agent import resume_tailor_agent, ResumeTailorState, extract_resume_from_bucket, get_supabase_client
 from ats_agent import ats_agent, AtsAgentState
+from llm_client import call_user_llm
 
 app = FastAPI(title="LangGraph Job Application Email & Parser Agent", version="1.0.0")
 
@@ -31,6 +33,27 @@ class JobParserRequest(BaseModel):
     user_id: str = ""
     send_webhook: bool = False
     save_to_db: bool = False
+    llm_provider: str = "OpenAI"
+    llm_api_key: str = ""
+    llm_model: str = ""
+
+class EmailGenerateRequest(BaseModel):
+    job_title: str = "Software Engineer"
+    company_name: str = "Hiring Team"
+    recipient_email: str = ""
+    requirements: str = ""
+    description: str = ""
+    resume_content: str = ""
+    full_name: str = ""
+    headline: str = ""
+    user_email: str = ""
+    phone: str = ""
+    linkedin: str = ""
+    portfolio: str = ""
+    github: str = ""
+    llm_provider: str = "OpenAI"
+    llm_api_key: str = ""
+    llm_model: str = ""
 
 class ResumeTailorRequest(BaseModel):
     user_id: str = ""
@@ -91,6 +114,9 @@ def analyze_resume_ats(req: AtsAnalysisRequest):
         "resume_name": req.resume_name,
         "stage": req.stage,
         "save_to_db": req.save_to_db,
+        "llm_provider": req.llm_provider,
+        "llm_api_key": req.llm_api_key,
+        "llm_model": req.llm_model,
         "status": "STARTING",
         "logs": [],
     }
@@ -120,7 +146,7 @@ def get_resume_file_url_endpoint(req: ResumeFileUrlRequest):
     """
     if not req.user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
-
+    
     supabase = get_supabase_client()
     file_name = req.file_name.strip()
 
@@ -161,7 +187,7 @@ def sync_resume_from_bucket_endpoint(req: ResumeBucketSyncRequest):
     """
     if not req.user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
-
+    
     file_name, extracted_text = extract_resume_from_bucket(req.user_id)
     if not extracted_text:
         return {
@@ -170,7 +196,7 @@ def sync_resume_from_bucket_endpoint(req: ResumeBucketSyncRequest):
             "resume_name": "",
             "resume_content": "",
         }
-
+    
     # Also generate signed URL for PDF viewer
     signed_url = ""
     try:
@@ -207,6 +233,9 @@ def trigger_agent_tailor_resume(req: ResumeTailorRequest):
         "resume_name": req.resume_name,
         "ats_report": req.ats_report,
         "save_to_db": req.save_to_db,
+        "llm_provider": req.llm_provider,
+        "llm_api_key": req.llm_api_key,
+        "llm_model": req.llm_model,
         "status": "STARTING",
         "logs": [],
     }
@@ -242,6 +271,9 @@ def trigger_agent_parse_job(req: JobParserRequest):
         "user_id": req.user_id,
         "save_to_db": req.save_to_db,
         "send_webhook": req.send_webhook,
+        "llm_provider": req.llm_provider,
+        "llm_api_key": req.llm_api_key,
+        "llm_model": req.llm_model,
         "status": "STARTING",
         "logs": [],
     }
@@ -297,6 +329,72 @@ def trigger_agent_send_email(req: SendEmailRequest):
         "subject": result.get("email_subject"),
         "logs": result.get("logs"),
     }
+
+@app.post("/api/agent/generate-email")
+def generate_email_endpoint(req: EmailGenerateRequest):
+    """
+    Direct Application Email Generation Agent using the user's configured LLM API.
+    """
+    if not req.llm_api_key:
+        raise HTTPException(status_code=400, detail="Missing user LLM API key.")
+
+    sender_name = req.full_name or "Applicant"
+    job_title = req.job_title or "Software Engineer"
+    company_name = req.company_name or "Hiring Team"
+
+    prompt = f"""You are an elite career strategist. Write a high-converting, professional, tailored job application email for:
+Applicant: {sender_name} ({req.headline or job_title})
+Email: {req.user_email} | Phone: {req.phone}
+Target Position: {job_title} at {company_name}
+Recruiter Email: {req.recipient_email}
+
+Job Requirements & Scope:
+{req.requirements}
+{req.description}
+
+Applicant's Resume Context:
+{req.resume_content[:2500] if req.resume_content else 'Experienced software professional.'}
+
+Guidelines:
+1. Subject line must be compelling, concise, and professional (e.g. "Application for {job_title} - {sender_name}").
+2. The body must open with high energy and direct statement of value.
+3. Highlight 2-3 specific achievements or technical qualifications directly matching the requirements.
+4. Keep paragraphs readable (3-4 concise paragraphs max).
+5. Professional sign-off including applicant name and contact details.
+
+Format output as:
+Subject: <Subject line>
+
+<Body of the email>
+"""
+
+    try:
+        raw_output = call_user_llm(
+            prompt=prompt,
+            system_prompt="You write compelling, recruiter-ready job application emails without placeholder brackets.",
+            provider=req.llm_provider,
+            api_key=req.llm_api_key,
+            model=req.llm_model,
+            temperature=0.3,
+            json_mode=False,
+        )
+
+        subject = f"Application for {job_title} - {sender_name}"
+        body = raw_output.strip()
+
+        subj_match = re.search(r"^Subject:\s*(.*)$", body, re.MULTILINE | re.IGNORECASE)
+        if subj_match:
+            subject = subj_match.group(1).strip()
+            body = re.sub(r"^Subject:\s*.*(?:\r?\n)+", "", body, count=1, flags=re.IGNORECASE).strip()
+
+        return {
+            "success": True,
+            "subject": subject,
+            "body": body,
+            "full_email": f"Subject: {subject}\n\n{body}",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM email generation error: {str(e)}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LangGraph Job Application Agent")

@@ -369,3 +369,169 @@ ${rawResume}`;
     source: `llm-${(provider || 'ai').toLowerCase()}`,
   };
 }
+
+/**
+ * Intelligent Job Post Parsing Agent using LLM
+ */
+export async function performLlmJobParse({
+  rawText = '',
+  provider = 'OpenAI',
+  apiKey = '',
+  model = '',
+}) {
+  const cleanInput = (rawText || '').trim();
+  if (!cleanInput) {
+    throw new Error('Raw job text is required for parsing.');
+  }
+
+  const systemPrompt = `You are a precision job posting parser agent.
+Extract structured hiring fields from the raw, unstructured job posting (e.g. LinkedIn, WhatsApp, hiring notices).
+
+Your output MUST be strict valid JSON with no markdown wrapping:
+{
+  "jobTitle": "<the specific job title, e.g. 'AI Expert', 'Senior Frontend Engineer'>",
+  "companyName": "<the hiring company name, e.g. 'Techies Global'>",
+  "recipientEmail": "<email to apply to, or empty string if not found>",
+  "requirements": "<summary of technical skills, qualifications, tools and experience>",
+  "description": "<complete cleaned job description and key responsibilities>"
+}
+
+Rules:
+- Remove markdown emojis or weird formatting from companyName and jobTitle.
+- If company name is not explicitly mentioned, use "Hiring Company".
+- Extract legitimate email addresses only (look for 'Apply at', 'Email', etc.).`;
+
+  const responseText = await callLlmCompletion({
+    provider,
+    apiKey,
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: cleanInput },
+    ],
+    temperature: 0.1,
+    responseFormat: 'json_object',
+  });
+
+  let cleanJson = responseText.trim();
+  if (cleanJson.startsWith('```json')) {
+    cleanJson = cleanJson.replace(/^```json/, '').replace(/```$/, '').trim();
+  } else if (cleanJson.startsWith('```')) {
+    cleanJson = cleanJson.replace(/^```/, '').replace(/```$/, '').trim();
+  }
+
+  const parsed = JSON.parse(cleanJson);
+  return {
+    jobTitle: (parsed.jobTitle || 'Software Engineer').trim(),
+    companyName: (parsed.companyName || 'Hiring Company').trim(),
+    recipientEmail: (parsed.recipientEmail || '').trim(),
+    requirements: (parsed.requirements || '').trim(),
+    description: (parsed.description || cleanInput).trim(),
+    source: `llm-${(provider || 'ai').toLowerCase()}`,
+  };
+}
+
+/**
+ * Intelligent Job Application Email Generation Agent using LLM
+ */
+export async function performLlmEmailGeneration({
+  jobTitle = '',
+  companyName = '',
+  recipientEmail = '',
+  requirements = '',
+  description = '',
+  resumeContent = '',
+  atsReport = null,
+  profile = {},
+  provider = 'OpenAI',
+  apiKey = '',
+  model = '',
+}) {
+  const candidateName = profile?.fullName || profile?.name || 'Applicant';
+  const headline = profile?.headline || '';
+  const candidateEmail = profile?.email || '';
+  const phone = profile?.phone || '';
+  const portfolio = profile?.portfolio || '';
+  const linkedin = profile?.linkedin || '';
+  const github = profile?.github || '';
+
+  const links = [
+    portfolio ? `Portfolio: ${portfolio}` : '',
+    github ? `GitHub: ${github}` : '',
+    linkedin ? `LinkedIn: ${linkedin}` : '',
+  ].filter(Boolean).join(' | ');
+
+  const contactBlock = [
+    candidateEmail,
+    phone,
+    links,
+  ].filter(Boolean).join('\n');
+
+  const systemPrompt = `You are an elite career strategist and executive application ghostwriter.
+Generate a high-converting, professional, tailored job application email from ${candidateName} to ${companyName || 'the hiring team'} for the position of "${jobTitle}".
+
+CRITICAL INSTRUCTIONS:
+1. Subject line must be crisp, professional, and include candidate name and role (e.g. "Application: ${jobTitle} - ${candidateName}").
+2. The email body must be concise, punchy (150-250 words), and tailored directly to the company's stated requirements.
+3. Hook the reader in the opening line with specific value—never use stale clichés like "I am writing to express my eager interest".
+4. Reference 2-3 specific matching competencies, tools, and quantified outcomes from the candidate's background.
+5. End with a polite, confident call to action regarding an interview, and include the candidate's professional sign-off and links.
+
+Your output MUST be strict valid JSON with no markdown wrapping:
+{
+  "subject": "<subject line>",
+  "body": "<complete email body text>",
+  "generatedEmail": "Subject: <subject line>\\n\\n<complete email body text>"
+}`;
+
+  const userContent = `TARGET JOB:
+Role: ${jobTitle}
+Company: ${companyName || 'Hiring Company'}
+Recipient: ${recipientEmail || 'Hiring Manager'}
+Requirements: ${requirements}
+Description: ${description}
+
+CANDIDATE BACKGROUND:
+Name: ${candidateName}
+Headline: ${headline}
+Contact:
+${contactBlock}
+
+Resume Highlights:
+${resumeContent ? resumeContent.slice(0, 3000) : 'Technical professional with verified experience in this field.'}
+
+ATS Matched Competencies: ${(atsReport?.matchedSkills || []).join(', ') || 'Relevant software & technical expertise'}`;
+
+  const responseText = await callLlmCompletion({
+    provider,
+    apiKey,
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+    temperature: 0.35,
+    responseFormat: 'json_object',
+  });
+
+  let cleanJson = responseText.trim();
+  if (cleanJson.startsWith('```json')) {
+    cleanJson = cleanJson.replace(/^```json/, '').replace(/```$/, '').trim();
+  } else if (cleanJson.startsWith('```')) {
+    cleanJson = cleanJson.replace(/^```/, '').replace(/```$/, '').trim();
+  }
+
+  const parsed = JSON.parse(cleanJson);
+  const subject = parsed.subject || `Application: ${jobTitle} - ${candidateName}`;
+  const body = parsed.body || '';
+  const generatedEmail = parsed.generatedEmail || `Subject: ${subject}\n\n${body}`;
+
+  return {
+    success: true,
+    subject,
+    body,
+    generatedEmail,
+    source: `llm-${(provider || 'ai').toLowerCase()}`,
+  };
+}
+

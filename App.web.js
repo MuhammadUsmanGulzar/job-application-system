@@ -36,7 +36,7 @@ import {
   syncResumeFromBucket,
   getResumeFileUrl
 } from './services/storage';
-import { LLM_PROVIDERS_CONFIG } from './services/ai';
+import { LLM_PROVIDERS_CONFIG, performLlmJobParse, performLlmEmailGeneration } from './services/ai';
 import { sendEmail } from './services/email';
 import {
   initSession,
@@ -398,33 +398,55 @@ export default function AppWeb() {
 
     let extracted = null;
 
-    // 1. Attempt LangGraph Python server endpoint if active locally (parse-only, never save to DB or trigger n8n here)
-    try {
-      const resp = await fetch('http://localhost:8000/api/agent/parse-job', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          raw_text: rawJobPost,
-          user_id: '',
-          send_webhook: false,
-          save_to_db: false,
-        }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        extracted = {
-          jobTitle: data.job_title || '',
-          companyName: data.company_name || '',
-          recipientEmail: data.recipient_email || '',
-          requirements: data.requirements || '',
-          description: data.description || rawJobPost,
-        };
+    // 1. Direct LLM Job Parsing Agent using user's LLM API if key is present
+    if (settings.llmApiKey && settings.llmApiKey.trim().length > 5) {
+      try {
+        const aiParsed = await performLlmJobParse({
+          rawText: rawJobPost,
+          provider: settings.llmProvider,
+          apiKey: settings.llmApiKey,
+          model: settings.llmModel,
+        });
+        if (aiParsed && aiParsed.jobTitle) {
+          extracted = aiParsed;
+        }
+      } catch (parseErr) {
+        console.warn('Direct LLM job parsing notice:', parseErr.message);
       }
-    } catch (_agentErr) {
-      // Local agent offline, fallback to client-side LangGraph parsing logic
     }
 
-    // 2. Client-side LangGraph logic fallback
+    // 2. Attempt LangGraph Python server endpoint if active locally
+    if (!extracted) {
+      try {
+        const resp = await fetch('http://localhost:8000/api/agent/parse-job', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            raw_text: rawJobPost,
+            user_id: '',
+            send_webhook: false,
+            save_to_db: false,
+            llm_provider: settings.llmProvider,
+            llm_api_key: settings.llmApiKey,
+            llm_model: settings.llmModel,
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          extracted = {
+            jobTitle: data.job_title || '',
+            companyName: data.company_name || '',
+            recipientEmail: data.recipient_email || '',
+            requirements: data.requirements || '',
+            description: data.description || rawJobPost,
+          };
+        }
+      } catch (_agentErr) {
+        // Local agent offline
+      }
+    }
+
+    // 3. Client-side pattern parsing logic fallback
     if (!extracted) {
       extracted = parseRawHiringPost(rawJobPost);
     }
@@ -1232,7 +1254,42 @@ export default function AppWeb() {
       setSelectedRecord(finalResult);
     };
 
-    // 5. Trigger the n8n webhook asynchronously
+    // 5. Direct Email Generation Agent using user's LLM API if key is present
+    if (settings.llmApiKey && settings.llmApiKey.trim().length > 5) {
+      try {
+        const userProfile = await getProfile(userId, session?.user?.email || '');
+        const emailResult = await performLlmEmailGeneration({
+          jobTitle: activeJobTitle,
+          companyName: activeCompanyName,
+          recipientEmail: activeRecipientEmail,
+          requirements: activeRequirements,
+          description: activeDescription,
+          resumeContent: settings.resumeContent || '',
+          atsReport: atsReport || null,
+          profile: userProfile,
+          provider: settings.llmProvider,
+          apiKey: settings.llmApiKey,
+          model: settings.llmModel,
+        });
+
+        if (emailResult.success && emailResult.generatedEmail) {
+          // Asynchronously notify webhook
+          fetch(n8nWebhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...webhookPayload, generated_email: emailResult.generatedEmail }),
+          }).catch(() => {});
+
+          await onEmailFound(emailResult.generatedEmail);
+          showSuccess(`Application email generated via ${settings.llmProvider}!`, 'Email Generated');
+          return;
+        }
+      } catch (llmGenErr) {
+        console.warn('Direct LLM email generation notice, falling back to webhook:', llmGenErr.message);
+      }
+    }
+
+    // 6. Trigger the n8n webhook asynchronously
     fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: {

@@ -7,6 +7,7 @@ import httpx
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from langgraph.graph import StateGraph, START, END
+from llm_client import call_user_llm, parse_json_from_llm_response
 
 load_dotenv()
 
@@ -30,7 +31,7 @@ def get_supabase_client() -> Client:
 class JobParserState(TypedDict, total=False):
     raw_text: str
     user_id: str
-
+    
     # Normalized & extracted fields
     normalized_text: str
     company_name: Optional[str]
@@ -39,6 +40,11 @@ class JobParserState(TypedDict, total=False):
     requirements: Optional[str]
     description: Optional[str]
 
+    # LLM Settings
+    llm_provider: Optional[str]
+    llm_api_key: Optional[str]
+    llm_model: Optional[str]
+    
     # Outcomes
     application_id: Optional[str]
     save_to_db: bool
@@ -57,7 +63,7 @@ def normalize_text_node(state: JobParserState) -> JobParserState:
     """Node 1: Normalizes unicode formatting (bold/italic/monospace math chars) into ASCII."""
     logs = state.get("logs", [])
     raw = state.get("raw_text", "")
-
+    
     if not raw or not raw.strip():
         return {
             **state,
@@ -68,10 +74,10 @@ def normalize_text_node(state: JobParserState) -> JobParserState:
 
     # Convert mathematical unicode bold/sans chars (like 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁) to plain ASCII
     normalized = unicodedata.normalize("NFKD", raw)
-
+    
     # Normalize bullet points and weird spaces
     normalized = normalized.replace("•", "\n• ").replace("·", "\n· ")
-
+    
     logs.append(f"Normalized text (length: {len(normalized)} chars)")
     return {
         **state,
@@ -103,6 +109,48 @@ def extract_job_details_node(state: JobParserState) -> JobParserState:
     """Node 2: Extracts Job Title, Company Name, Recipient Email, Requirements, and Description."""
     logs = state.get("logs", [])
     text = state["normalized_text"]
+
+    # 0. Direct User LLM Extraction if API key is provided
+    llm_api_key = (state.get("llm_api_key") or "").strip()
+    if llm_api_key:
+        try:
+            prompt = f"""You are an expert recruitment parser. Analyze this raw job posting text and extract structured recruitment data.
+Return ONLY valid JSON matching this schema:
+{{
+  "jobTitle": "Exact professional job title (e.g. AI Expert, Senior React Developer)",
+  "companyName": "Clean company name without filler words",
+  "recipientEmail": "Application submission email or HR contact email (empty string if none)",
+  "requirements": "Key qualifications, required skills, and core responsibilities formatted as clean bullet points",
+  "description": "Clean summary of role scope, expectations, and benefits"
+}}
+
+Raw Job Posting:
+\"\"\"{text}\"\"\"
+"""
+            raw_json = call_user_llm(
+                prompt=prompt,
+                system_prompt="You extract job postings into clean, structured JSON format with zero conversational filler.",
+                provider=state.get("llm_provider", "OpenAI"),
+                api_key=llm_api_key,
+                model=state.get("llm_model", ""),
+                temperature=0.1,
+                json_mode=True,
+            )
+            parsed = parse_json_from_llm_response(raw_json)
+            if parsed.get("jobTitle"):
+                logs.append(f"Successfully extracted job fields via user's LLM ({state.get('llm_provider', 'OpenAI')})")
+                return {
+                    **state,
+                    "job_title": parsed.get("jobTitle", "Software Engineer"),
+                    "company_name": parsed.get("companyName", "Hiring Company"),
+                    "recipient_email": parsed.get("recipientEmail", ""),
+                    "requirements": parsed.get("requirements", ""),
+                    "description": parsed.get("description", text.strip()),
+                    "status": "PARSED",
+                    "logs": logs,
+                }
+        except Exception as e:
+            logs.append(f"User LLM parsing note: {str(e)}. Falling back to rule-based engine.")
 
     # 1. Extract Email
     email_match = re.search(
