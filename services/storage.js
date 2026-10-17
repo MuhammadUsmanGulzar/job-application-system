@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { generatePdfFromResumeText } from './pdfGenerator.js';
 import { supabase } from '../supabase';
 import { performLlmResumeOptimization } from './ai.js';
 
@@ -236,108 +236,6 @@ export async function saveSettings(userId, settings) {
 // RESUME STORAGE BUCKET (Isolated folder per user: resumes/{user_id}/{filename})
 // --------------------------------------------------------
 
-/**
- * Builds a clean, professional ATS-friendly PDF document from resume text.
- * Uses standard Letter page size, 48pt margins, clean hierarchy, and word wrap.
- */
-export async function generatePdfFromResumeText(resumeText) {
-  const pdfDoc = await PDFDocument.create();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  const pageWidth = 612;
-  const pageHeight = 792;
-  const margin = 48;
-  const maxWidth = pageWidth - margin * 2;
-  const fontSize = 9.5;
-  const headingSize = 12;
-  const titleSize = 16;
-  const lineHeight = 13.5;
-
-  let page = pdfDoc.addPage([pageWidth, pageHeight]);
-  let y = pageHeight - margin;
-
-  const lines = (resumeText || '').split('\n');
-
-  for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i];
-    const trimmed = rawLine.trim();
-
-    if (!trimmed) {
-      y -= lineHeight * 0.6;
-      if (y < margin + 20) {
-        page = pdfDoc.addPage([pageWidth, pageHeight]);
-        y = pageHeight - margin;
-      }
-      continue;
-    }
-
-    const isSectionHeading = /^(PROFESSIONAL SUMMARY|SUMMARY|EXPERIENCE|WORK EXPERIENCE|PROFESSIONAL EXPERIENCE|EDUCATION|SKILLS|TECHNICAL SKILLS|PROJECTS|CERTIFICATIONS|KEY COMPETENCIES|CORE COMPETENCIES|ACHIEVEMENTS)\b/i.test(trimmed) || 
-      (trimmed === trimmed.toUpperCase() && trimmed.length < 40 && !trimmed.includes(':') && !trimmed.startsWith('•'));
-    
-    const isName = (i === 0);
-
-    let activeFont = font;
-    let size = fontSize;
-    let color = rgb(0.12, 0.16, 0.22);
-
-    if (isName) {
-      activeFont = fontBold;
-      size = titleSize;
-      color = rgb(0.06, 0.09, 0.16);
-      y -= 2;
-    } else if (isSectionHeading) {
-      activeFont = fontBold;
-      size = headingSize;
-      color = rgb(0.08, 0.14, 0.25);
-      y -= 6;
-    }
-
-    const words = trimmed.split(' ');
-    let currentLine = '';
-
-    for (let w = 0; w < words.length; w++) {
-      const word = words[w];
-      const testLine = currentLine ? currentLine + ' ' + word : word;
-      const textWidth = activeFont.widthOfTextAtSize(testLine, size);
-
-      if (textWidth > maxWidth && currentLine) {
-        if (y < margin + 15) {
-          page = pdfDoc.addPage([pageWidth, pageHeight]);
-          y = pageHeight - margin;
-        }
-        page.drawText(currentLine, { x: margin, y, size, font: activeFont, color });
-        y -= lineHeight;
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-    }
-
-    if (currentLine) {
-      if (y < margin + 15) {
-        page = pdfDoc.addPage([pageWidth, pageHeight]);
-        y = pageHeight - margin;
-      }
-      page.drawText(currentLine, { x: margin, y, size, font: activeFont, color });
-      y -= (isSectionHeading ? lineHeight + 3 : lineHeight);
-
-      if (isSectionHeading) {
-        page.drawLine({
-          start: { x: margin, y: y + 4 },
-          end: { x: pageWidth - margin, y: y + 4 },
-          thickness: 0.75,
-          color: rgb(0.82, 0.85, 0.9),
-        });
-        y -= 3;
-      }
-    }
-  }
-
-  const pdfBytes = await pdfDoc.save();
-  return pdfBytes;
-}
-
 export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, desiredFileName = '') {
   if (!userId || !tailoredResumeText) return null;
 
@@ -476,62 +374,48 @@ export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
 export async function syncResumeFromBucket(userId) {
   if (!userId) throw new Error('User ID required to sync resume from bucket');
 
-  // 1. Try calling the Python Agent endpoint to extract PDF/docx/text
+  // 1. First check user_settings and public.resumes directly in Supabase DB (fastest, no network errors)
   try {
-    const resp = await fetch('http://localhost:8000/api/agent/sync-resume-from-bucket', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId }),
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.success && data.resume_content) {
-        // Cache locally in AsyncStorage
-        try {
-          const key = `${SETTINGS_KEY}_${userId}`;
-          const currentStr = await AsyncStorage.getItem(key);
-          const current = currentStr ? JSON.parse(currentStr) : {};
-          const updated = {
-            ...current,
-            resumeName: data.resume_name || 'Resume.pdf',
-            resumeContent: data.resume_content,
-          };
-          await AsyncStorage.setItem(key, JSON.stringify(updated));
-        } catch (_cErr) {}
+    const { data: row } = await supabase
+      .from('user_settings')
+      .select('resume_name, resume_content')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-        return {
-          resumeName: data.resume_name,
-          resumeContent: data.resume_content,
-          source: 'python-agent-bucket',
-        };
-      }
+    if (row && row.resume_content && row.resume_content.trim().length > 20) {
+      return {
+        resumeName: row.resume_name || 'Resume.pdf',
+        resumeContent: row.resume_content,
+        source: 'user_settings',
+      };
     }
-  } catch (agentErr) {
-    console.log('Python bucket agent sync note:', agentErr.message);
-  }
 
-  // 2. Direct Supabase Storage Bucket query (fallback)
+    const { data: dbResumes } = await supabase
+      .from('resumes')
+      .select('file_name, file_path, parsed_text')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (dbResumes && dbResumes.length > 0 && dbResumes[0].parsed_text) {
+      return {
+        resumeName: dbResumes[0].file_name || 'Resume.pdf',
+        resumeContent: dbResumes[0].parsed_text,
+        source: 'resumes_table',
+      };
+    }
+  } catch (_dbErr) {}
+
+  // 2. Direct Supabase Storage Bucket query
   try {
     const { data: files, error: listErr } = await supabase.storage.from('resumes').list(userId);
     if (!listErr && files && files.length > 0) {
       const realFiles = files.filter(f => f.name && !f.name.endsWith('/'));
       if (realFiles.length > 0) {
-        // Sort descending by updated_at or created_at
         realFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
         const chosen = realFiles[0];
         const filePath = `${userId}/${chosen.name}`;
 
-        // First check if text is already saved in user_settings from prior sync
-        const { data: row } = await supabase.from('user_settings').select('resume_name, resume_content').eq('user_id', userId).maybeSingle();
-        if (row && row.resume_content) {
-          return {
-            resumeName: row.resume_name || chosen.name,
-            resumeContent: row.resume_content,
-            source: 'supabase-bucket',
-          };
-        }
-
-        // Download file from bucket
         const { data: blob, error: dlErr } = await supabase.storage.from('resumes').download(filePath);
         if (!dlErr && blob) {
           let text = '';
@@ -558,6 +442,7 @@ export async function syncResumeFromBucket(userId) {
     console.warn('Direct bucket download error:', storageErr);
   }
 
+
   // 3. Fallback to user_settings table
   try {
     const { data: fallbackRow } = await supabase.from('user_settings').select('resume_name, resume_content').eq('user_id', userId).maybeSingle();
@@ -577,35 +462,32 @@ export async function syncResumeFromBucket(userId) {
 export async function getResumeFileUrl(userId, fileName = '') {
   if (!userId) return null;
 
-  // 1. Try Python Agent endpoint (uses service role key, highly reliable)
+  // 1. Direct Supabase Storage signed URL (fast, direct to cloud, no connection errors)
   try {
-    const resp = await fetch('http://localhost:8000/api/agent/get-resume-file-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId, file_name: fileName || '' }),
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.success && data.signed_url) {
-        return {
-          url: data.signed_url,
-          fileName: data.file_name,
-          isPdf: !!data.is_pdf,
-        };
-      }
-    }
-  } catch (_e) {}
-
-  // 2. Direct Supabase Storage signed URL (client fallback)
-  try {
-    let targetFileName = fileName;
+    let targetFileName = (fileName || '').trim();
     if (!targetFileName) {
-      const { data: files } = await supabase.storage.from('resumes').list(userId);
-      if (files && files.length > 0) {
-        const real = files.filter(f => f.name && !f.name.endsWith('/'));
-        if (real.length > 0) {
-          real.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
-          targetFileName = real[0].name;
+      // First check public.resumes table for the latest primary resume
+      try {
+        const { data: dbResumes } = await supabase
+          .from('resumes')
+          .select('file_name, file_path')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (dbResumes && dbResumes.length > 0 && dbResumes[0].file_name) {
+          targetFileName = dbResumes[0].file_name;
+        }
+      } catch (_dbE) {}
+
+      if (!targetFileName) {
+        const { data: files } = await supabase.storage.from('resumes').list(userId);
+        if (files && files.length > 0) {
+          const real = files.filter(f => f.name && !f.name.endsWith('/'));
+          if (real.length > 0) {
+            real.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+            targetFileName = real[0].name;
+          }
         }
       }
     }
