@@ -235,6 +235,89 @@ export async function saveSettings(userId, settings) {
 // RESUME STORAGE BUCKET (Isolated folder per user: resumes/{user_id}/{filename})
 // --------------------------------------------------------
 
+export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, desiredFileName = '') {
+  if (!userId || !tailoredResumeText) return null;
+
+  const fileName = desiredFileName || `Resume_Tailored_${Date.now()}.txt`;
+  const filePath = `${userId}/${fileName}`;
+
+  try {
+    let uploadPayload;
+    if (typeof Blob !== 'undefined') {
+      uploadPayload = new Blob([tailoredResumeText], { type: 'text/plain;charset=utf-8' });
+    } else {
+      uploadPayload = tailoredResumeText;
+    }
+
+    const { data: uploadData, error: uploadErr } = await supabase.storage
+      .from('resumes')
+      .upload(filePath, uploadPayload, {
+        upsert: true,
+        contentType: 'text/plain;charset=utf-8',
+      });
+
+    if (uploadErr) {
+      console.warn('Tailored resume bucket upload warning:', uploadErr.message);
+    }
+
+    let signedUrl = '';
+    try {
+      const { data: urlData } = await supabase.storage
+        .from('resumes')
+        .createSignedUrl(filePath, 7200);
+      signedUrl = urlData?.signedUrl || '';
+    } catch (_uErr) {}
+
+    // Record into public.resumes table
+    try {
+      await supabase.from('resumes').insert({
+        user_id: userId,
+        file_name: fileName,
+        file_path: filePath,
+        parsed_text: tailoredResumeText,
+        is_primary: true,
+      });
+    } catch (_dbErr) {
+      console.warn('Insert to public.resumes note:', _dbErr.message);
+    }
+
+    // Sync to user_settings table
+    try {
+      await supabase
+        .from('user_settings')
+        .upsert({
+          user_id: userId,
+          resume_name: fileName,
+          resume_content: tailoredResumeText,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+    } catch (_sErr) {}
+
+    // Also update local AsyncStorage cache
+    try {
+      const key = `${SETTINGS_KEY}_${userId}`;
+      const currentStr = await AsyncStorage.getItem(key);
+      const current = currentStr ? JSON.parse(currentStr) : {};
+      await AsyncStorage.setItem(key, JSON.stringify({
+        ...current,
+        resumeName: fileName,
+        resumeContent: tailoredResumeText,
+      }));
+    } catch (_cErr) {}
+
+    return {
+      success: true,
+      fileName,
+      filePath,
+      signedUrl,
+      bucketSaved: true,
+    };
+  } catch (err) {
+    console.error('uploadTailoredResumeToBucket error:', err);
+    return null;
+  }
+}
+
 export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
   if (!userId) throw new Error('User must be logged in to upload to Supabase storage.');
 
@@ -531,7 +614,11 @@ export async function tailorResumeForJob({
   llmApiKey = '',
   llmModel = '',
 }) {
-  const newFileName = `Resume_Tailored_${jobTitle.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 25)}.txt`;
+  const cleanTitle = (jobTitle || 'Role').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
+  const cleanComp = (companyName || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 15);
+  const ts = Date.now().toString().slice(-4);
+  const compPart = cleanComp ? `_${cleanComp}` : '';
+  const newFileName = `Resume_Tailored_${cleanTitle}${compPart}_${ts}.txt`;
 
   // 1. Direct LLM resume optimization if API key is provided
   if (llmApiKey && llmApiKey.trim().length > 5) {
@@ -549,12 +636,19 @@ export async function tailorResumeForJob({
       });
 
       if (result.success && result.tailoredResume) {
+        let bucketInfo = null;
         if (userId) {
           try {
-            await updateResumeContent(userId, result.tailoredResume, result.resumeName || newFileName);
+            bucketInfo = await uploadTailoredResumeToBucket(userId, result.tailoredResume, result.resumeName || newFileName);
           } catch (_e) {}
         }
-        return result;
+        return {
+          ...result,
+          resumeName: bucketInfo?.fileName || result.resumeName || newFileName,
+          bucketSaved: Boolean(bucketInfo?.filePath),
+          filePath: bucketInfo?.filePath || '',
+          signedUrl: bucketInfo?.signedUrl || '',
+        };
       }
     } catch (llmErr) {
       console.warn(`Direct LLM resume tailoring notice (${llmErr.message}), falling back to smart local optimizer.`);
@@ -585,10 +679,19 @@ export async function tailorResumeForJob({
     if (response.ok) {
       const result = await response.json();
       if (result.success && result.tailored_resume) {
+        let bucketInfo = null;
+        if (userId) {
+          try {
+            bucketInfo = await uploadTailoredResumeToBucket(userId, result.tailored_resume, result.resume_name || newFileName);
+          } catch (_e) {}
+        }
         return {
           success: true,
           tailoredResume: result.tailored_resume,
-          resumeName: result.resume_name || newFileName,
+          resumeName: bucketInfo?.fileName || result.resume_name || newFileName,
+          bucketSaved: Boolean(bucketInfo?.filePath),
+          filePath: bucketInfo?.filePath || '',
+          signedUrl: bucketInfo?.signedUrl || '',
           matchedSkills: result.matched_skills || [],
           missingSkills: result.missing_skills || [],
           enhancements: result.enhancements || [],
@@ -716,23 +819,28 @@ Bachelor of Science in Computer Science or Related Field`,
 
   const tailoredResume = resumeBlocks.filter((b, i) => !(b === '' && resumeBlocks[i - 1] === '')).join('\n').trim();
 
-  // Persist tailored resume
+  // Persist tailored resume to Supabase Storage bucket and DB
+  let bucketInfo = null;
   if (userId) {
     try {
-      await updateResumeContent(userId, tailoredResume, newFileName);
+      bucketInfo = await uploadTailoredResumeToBucket(userId, tailoredResume, newFileName);
     } catch (_e) {}
   }
 
   return {
     success: true,
     tailoredResume,
-    resumeName: newFileName,
+    resumeName: bucketInfo?.fileName || newFileName,
+    bucketSaved: Boolean(bucketInfo?.filePath),
+    filePath: bucketInfo?.filePath || '',
+    signedUrl: bucketInfo?.signedUrl || '',
     matchedSkills: reportMatches,
     missingSkills: reportMissing.slice(4),
     enhancements: [
       `Professional title and headline aligned directly with "${jobTitle}"`,
       `Executive summary tailored specifically for ${companyName || 'the target company'}`,
       `Highlighted high-impact competencies: ${skillsStr}`,
+      `Saved tailored resume to Supabase bucket: resumes/${userId}/${bucketInfo?.fileName || newFileName}`,
       'Formatted to 100% clean ATS standard with zero parsing barriers',
     ],
     source: 'smart-local-optimizer',

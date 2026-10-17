@@ -619,6 +619,17 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
 
         logs.append("Recorded tailored resume into public.resumes table.")
 
+        # 3. Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}'
+        try:
+            supabase.storage.from_("resumes").upload(
+                f"{user_id}/{file_name}",
+                tailored.encode("utf-8"),
+                {"upsert": "true", "content-type": "text/plain;charset=utf-8"}
+            )
+            logs.append(f"Successfully uploaded tailored resume to Supabase storage bucket 'resumes/{user_id}/{file_name}'.")
+        except Exception as st_err:
+            logs.append(f"Storage bucket upload notice: {st_err}")
+
         return {
             **state,
             "resume_name": file_name,

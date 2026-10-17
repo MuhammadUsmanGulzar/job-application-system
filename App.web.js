@@ -328,6 +328,33 @@ export default function AppWeb() {
   const [isSavingResumeText, setIsSavingResumeText] = useState(false);
   const [isSyncingBucket, setIsSyncingBucket] = useState(false);
 
+  // Application-Specific Picked Resume State
+  const [pickedResumeSource, setPickedResumeSource] = useState('master'); // 'master' | 'tailored'
+  const [tailoredResumeName, setTailoredResumeName] = useState('');
+  const [tailoredResumeContent, setTailoredResumeContent] = useState('');
+  const [tailoredResumeBucketPath, setTailoredResumeBucketPath] = useState('');
+  const [showPickedResumePreviewModal, setShowPickedResumePreviewModal] = useState(false);
+
+  const getPickedResume = () => {
+    if (pickedResumeSource === 'tailored' && tailoredResumeContent) {
+      return {
+        source: 'tailored',
+        name: tailoredResumeName || 'Resume_Tailored_ATS.txt',
+        content: tailoredResumeContent,
+        bucketPath: tailoredResumeBucketPath || (session?.user?.id ? `resumes/${session.user.id}/${tailoredResumeName || 'Resume_Tailored_ATS.txt'}` : `resumes/${tailoredResumeName || 'Resume_Tailored_ATS.txt'}`),
+        isAtsOptimized: true,
+      };
+    }
+    const masterName = settings.resumeName || 'Master Resume.txt';
+    return {
+      source: 'master',
+      name: masterName,
+      content: settings.resumeContent || '',
+      bucketPath: session?.user?.id ? `resumes/${session.user.id}/${masterName}` : `resumes/${masterName}`,
+      isAtsOptimized: false,
+    };
+  };
+
   useEffect(() => {
     if (settings?.resumeContent) {
       setResumeEditText(settings.resumeContent);
@@ -373,6 +400,11 @@ export default function AppWeb() {
     setAtsReport(null);
     setAtsBaselineReport(null);
     setAtsApplicationId('');
+    setTailoredResumeName('');
+    setTailoredResumeContent('');
+    setTailoredResumeBucketPath('');
+    setPickedResumeSource('master');
+    setResumeTailorResult(null);
   };
 
   const handleLoadSamplePost = () => {
@@ -818,8 +850,9 @@ export default function AppWeb() {
     const targetEmail = (overrideFields?.recipientEmail || recipientEmail || '').trim();
     const targetRequirements = (overrideFields?.requirements || requirements || '').trim();
     const targetDescription = (overrideFields?.description || description || '').trim();
-    const resumeContent = options.resumeContent ?? settings.resumeContent ?? '';
-    const resumeName = options.resumeName ?? settings.resumeName ?? 'Resume.txt';
+    const picked = getPickedResume();
+    const resumeContent = options.resumeContent ?? picked.content ?? '';
+    const resumeName = options.resumeName ?? picked.name ?? 'Resume.txt';
     const stage = options.stage || 'before';
 
     if (!targetTitle || (!targetRequirements && !targetDescription)) {
@@ -918,8 +951,10 @@ export default function AppWeb() {
         throw new Error('The resume optimization agent did not return an updated resume.');
       }
 
-      const updated = { ...settings, resumeName: result.resumeName, resumeContent: result.tailoredResume };
-      setSettings(updated);
+      setTailoredResumeName(result.resumeName);
+      setTailoredResumeContent(result.tailoredResume);
+      setTailoredResumeBucketPath(result.bucketPath || (session?.user?.id ? `resumes/${session.user.id}/${result.resumeName}` : `resumes/${result.resumeName}`));
+      setPickedResumeSource('tailored');
       setResumeEditText(result.tailoredResume);
       setResumeTailorResult(result);
 
@@ -930,7 +965,10 @@ export default function AppWeb() {
         stage: 'after',
       });
       if (analyzed?.report) {
-        showSuccess(`Resume optimized and re-scored at ${analyzed.report.score}% ATS match.`, 'Optimization Complete');
+        showSuccess(
+          `ATS-optimized resume generated & saved in Supabase bucket (${result.bucketPath || result.resumeName})! Match score updated to ${analyzed.report.score}%. This tailored resume is now picked for your application.`,
+          'Resume Optimized & Saved to Bucket'
+        );
       }
     } catch (error) {
       showError(`Resume optimization failed: ${error.message}`, 'Optimization Error');
@@ -969,17 +1007,15 @@ export default function AppWeb() {
       });
 
       if (result.success && result.tailoredResume) {
-        const updated = {
-          ...settings,
-          resumeName: result.resumeName,
-          resumeContent: result.tailoredResume,
-        };
-        setSettings(updated);
+        setTailoredResumeName(result.resumeName);
+        setTailoredResumeContent(result.tailoredResume);
+        setTailoredResumeBucketPath(result.bucketPath || (session?.user?.id ? `resumes/${session.user.id}/${result.resumeName}` : `resumes/${result.resumeName}`));
+        setPickedResumeSource('tailored');
         setResumeEditText(result.tailoredResume);
         setResumeTailorResult(result);
         showSuccess(
-          `Resume successfully tailored for ${targetTitle} at ${targetCompany || 'target company'}! Highlighted ${result.matchedSkills?.length || 0} key skills.`,
-          'Resume Tailored!'
+          `Resume tailored for ${targetTitle} at ${targetCompany || 'target company'} & saved in Supabase bucket (${result.bucketPath || result.resumeName})! Picked for this application.`,
+          'Resume Tailored & Saved!'
         );
       } else {
         showError('Could not tailor resume. Please check your inputs.', 'Notice');
@@ -1164,8 +1200,14 @@ export default function AppWeb() {
       ats_score: atsReport?.score ?? null,
       atsReport: atsReport || null,
       ats_report: atsReport || null,
-      resumeName: settings.resumeName || '',
-      resume_name: settings.resumeName || '',
+      resumeName: getPickedResume().name,
+      resume_name: getPickedResume().name,
+      resumeContent: getPickedResume().content,
+      resume_content: getPickedResume().content,
+      pickedResumeSource: getPickedResume().source,
+      picked_resume_source: getPickedResume().source,
+      resumeBucketPath: getPickedResume().bucketPath,
+      resume_bucket_path: getPickedResume().bucketPath,
     };
 
     let directWebhookContent = '';
@@ -1264,7 +1306,7 @@ export default function AppWeb() {
           recipientEmail: activeRecipientEmail,
           requirements: activeRequirements,
           description: activeDescription,
-          resumeContent: settings.resumeContent || '',
+          resumeContent: getPickedResume().content || '',
           atsReport: atsReport || null,
           profile: userProfile,
           provider: settings.llmProvider,
@@ -2118,40 +2160,108 @@ export default function AppWeb() {
                   />
                 </View>
 
-                {/* Resume Status & AI Tailor Quick Action */}
-                <View style={styles.resumeBoxApply}>
-                  <View style={styles.resumeBoxHeader}>
-                    <View style={{ flex: 1, minWidth: 180 }}>
-                      <Text style={styles.resumeBoxTitle}>
-                        Attached resume: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{settings.resumeName || 'Master Resume.txt'}</Text>
-                      </Text>
-                      <Text style={styles.resumeBoxSubtitle}>
-                        {settings.resumeContent ? `${settings.resumeContent.length} chars • Ready to submit or tailor` : 'No resume uploaded yet'}
-                      </Text>
-                    </View>
+                {/* Active Resume Selection & Picking Banner */}
+                {(() => {
+                  const picked = getPickedResume();
+                  const isTailoredPicked = picked.source === 'tailored';
+                  const hasTailored = !!tailoredResumeContent;
 
-                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
-                      <TouchableOpacity
-                        style={styles.resumeViewBtn}
-                        onPress={() => setActiveTab('resume')}
-                      >
-                        <Text style={styles.resumeViewBtnText}>View resume</Text>
-                      </TouchableOpacity>
+                  return (
+                    <View style={[styles.pickedResumeCard, isTailoredPicked && styles.pickedResumeCardActive]}>
+                      {/* Top Bar: Live Picking Status & Indicator */}
+                      <View style={styles.pickedResumeTopBar}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <View style={[styles.pickedStatusDot, isTailoredPicked ? styles.dotGreen : styles.dotBlue]} />
+                          <Text style={styles.pickedResumeEyebrow}>PICKING FOR APPLICATION:</Text>
+                          <View style={[styles.pickedBadge, isTailoredPicked ? styles.pickedBadgeGreen : styles.pickedBadgeBlue]}>
+                            <Text style={[styles.pickedBadgeText, isTailoredPicked ? styles.pickedBadgeTextGreen : styles.pickedBadgeTextBlue]}>
+                              {isTailoredPicked ? '✓ TAILORED ATS RESUME' : 'MASTER RESUME'}
+                            </Text>
+                          </View>
+                        </View>
 
-                      <TouchableOpacity
-                        style={[styles.resumeTailorBtn, isTailoringResume && styles.disabledButton]}
-                        onPress={handleTailorResumeForCurrentJob}
-                        disabled={isTailoringResume}
-                      >
-                        {isTailoringResume ? (
-                          <ActivityIndicator size="small" color="#ffffff" />
-                        ) : (
-                          <Text style={styles.resumeTailorBtnText}>Tailor for this job</Text>
-                        )}
-                      </TouchableOpacity>
+                        {/* Supabase Storage Indicator */}
+                        <View style={styles.bucketTag}>
+                          <Text style={styles.bucketTagIcon}>☁️</Text>
+                          <Text style={styles.bucketTagText}>
+                            {isTailoredPicked ? 'Saved in Supabase Storage' : 'Supabase Storage'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Main Resume Details */}
+                      <View style={styles.pickedResumeBody}>
+                        <View style={{ flex: 1, minWidth: 200 }}>
+                          <Text style={styles.pickedFileName} numberOfLines={1}>
+                            {picked.name}
+                          </Text>
+                          <Text style={styles.pickedBucketPath} numberOfLines={1}>
+                            Bucket path: <Text style={{ fontFamily: 'monospace', color: '#166534', fontWeight: '700' }}>{picked.bucketPath}</Text>
+                          </Text>
+                          <Text style={styles.pickedCharCount}>
+                            {picked.content ? `${picked.content.length.toLocaleString()} characters` : 'No resume content uploaded yet'} • {isTailoredPicked ? 'Targeted ATS optimizations applied' : 'Profile master resume'}
+                          </Text>
+                        </View>
+
+                        <View style={styles.pickedResumeActionRow}>
+                          <TouchableOpacity
+                            style={styles.pickedPreviewBtn}
+                            onPress={() => setShowPickedResumePreviewModal(true)}
+                          >
+                            <Text style={styles.pickedPreviewBtnText}>👁️ Preview</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.resumeViewBtn}
+                            onPress={() => setActiveTab('resume')}
+                          >
+                            <Text style={styles.resumeViewBtnText}>All resumes</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={[styles.resumeTailorBtn, isTailoringResume && styles.disabledButton]}
+                            onPress={handleTailorResumeForCurrentJob}
+                            disabled={isTailoringResume}
+                          >
+                            {isTailoringResume ? (
+                              <ActivityIndicator size="small" color="#ffffff" />
+                            ) : (
+                              <Text style={styles.resumeTailorBtnText}>
+                                {hasTailored ? 'Re-tailor resume' : 'Tailor for this job'}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      {/* Resume Switcher: Toggle between Tailored and Master when tailored exists */}
+                      {hasTailored && (
+                        <View style={styles.resumeSwitcherRow}>
+                          <Text style={styles.switcherLabel}>Choose which resume to submit with this application:</Text>
+                          <View style={styles.switcherSegmentGroup}>
+                            <TouchableOpacity
+                              style={[styles.switcherSegment, isTailoredPicked && styles.switcherSegmentActiveGreen]}
+                              onPress={() => setPickedResumeSource('tailored')}
+                            >
+                              <Text style={[styles.switcherSegmentText, isTailoredPicked && styles.switcherSegmentTextActive]}>
+                                🎯 Tailored ATS Resume {isTailoredPicked ? '(Selected)' : ''}
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[styles.switcherSegment, !isTailoredPicked && styles.switcherSegmentActiveBlue]}
+                              onPress={() => setPickedResumeSource('master')}
+                            >
+                              <Text style={[styles.switcherSegmentText, !isTailoredPicked && styles.switcherSegmentTextActive]}>
+                                📄 Master Resume {!isTailoredPicked ? '(Selected)' : ''}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
                     </View>
-                  </View>
-                </View>
+                  );
+                })()}
 
                 <TouchableOpacity
                   style={[styles.webPrimaryButton, (isGenerating || isAnalyzingAts) && styles.disabledButton]}
@@ -3573,6 +3683,67 @@ export default function AppWeb() {
         </Modal>
       )}
 
+      {/* Picked Resume Text Preview Modal */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={showPickedResumePreviewModal}
+        onRequestClose={() => setShowPickedResumePreviewModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxWidth: 760, maxHeight: '88%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                  <Text style={styles.modalTitle}>Resume Picked for Application</Text>
+                  <View style={[styles.pickedBadge, getPickedResume().source === 'tailored' ? styles.pickedBadgeGreen : styles.pickedBadgeBlue]}>
+                    <Text style={[styles.pickedBadgeText, getPickedResume().source === 'tailored' ? styles.pickedBadgeTextGreen : styles.pickedBadgeTextBlue]}>
+                      {getPickedResume().source === 'tailored' ? '✓ TAILORED ATS RESUME' : 'MASTER RESUME'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.modalSub}>
+                  File: {getPickedResume().name} • Storage: {getPickedResume().bucketPath}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setShowPickedResumePreviewModal(false)}
+              >
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ flex: 1, padding: 16, backgroundColor: '#f8fafc', borderRadius: 8, marginVertical: 12 }}>
+              <Text style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 18, color: '#1e293b' }} selectable>
+                {getPickedResume().content || 'No resume content available.'}
+              </Text>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#e2e8f0' }]}
+                onPress={() => {
+                  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                    navigator.clipboard.writeText(getPickedResume().content || '');
+                    showSuccess('Resume text copied to clipboard!', 'Copied');
+                  }
+                }}
+              >
+                <Text style={[styles.modalBtnText, { color: '#334155' }]}>📋 Copy text</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#10b981' }]}
+                onPress={() => setShowPickedResumePreviewModal(false)}
+              >
+                <Text style={[styles.modalBtnText, { color: '#ffffff' }]}>Confirm & Continue</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Custom Modern Alert & Popup Modal */}
       <CustomAlertModal
         {...alertConfig}
@@ -4812,7 +4983,176 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 
-  // Resume Box in Apply Tab
+  // Resume Box & Picked Resume in Apply Tab
+  pickedResumeCard: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+  },
+  pickedResumeCardActive: {
+    borderColor: '#86efac',
+    backgroundColor: '#f0fdf4',
+  },
+  pickedResumeTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  pickedStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  dotGreen: {
+    backgroundColor: '#16a34a',
+  },
+  dotBlue: {
+    backgroundColor: '#2563eb',
+  },
+  pickedResumeEyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: '#64748b',
+  },
+  pickedBadge: {
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  pickedBadgeGreen: {
+    backgroundColor: '#dcfce7',
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  pickedBadgeBlue: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  pickedBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  pickedBadgeTextGreen: {
+    color: '#15803d',
+  },
+  pickedBadgeTextBlue: {
+    color: '#1d4ed8',
+  },
+  bucketTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  bucketTagIcon: {
+    fontSize: 11,
+  },
+  bucketTagText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  pickedResumeBody: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  pickedFileName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 3,
+  },
+  pickedBucketPath: {
+    fontSize: 11,
+    color: '#475569',
+    marginBottom: 3,
+  },
+  pickedCharCount: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  pickedResumeActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  pickedPreviewBtn: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  pickedPreviewBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  resumeSwitcherRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  switcherLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 6,
+  },
+  switcherSegmentGroup: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  switcherSegment: {
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  switcherSegmentActiveGreen: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#22c55e',
+  },
+  switcherSegmentActiveBlue: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#3b82f6',
+  },
+  switcherSegmentText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  switcherSegmentTextActive: {
+    color: '#0f172a',
+    fontWeight: '700',
+  },
   resumeBoxApply: {
     backgroundColor: '#f8fafc',
     borderWidth: 1,
