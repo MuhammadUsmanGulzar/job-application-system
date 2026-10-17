@@ -30,6 +30,8 @@ import {
   createApplication,
   updateApplicationGeneratedEmail,
   updateApplicationStatus,
+  updateFullApplication,
+  htmlToPlainText,
   subscribeToApplications,
   mapApplicationRow
 } from './services/storage';
@@ -43,6 +45,20 @@ import {
 } from './services/sessionManager';
 export const SAMPLE_HIRING_POST = `[Techies Global](https://www.linkedin.com/company/techies-global/) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁 (𝗣𝗮𝗿𝘁 𝘁𝗶𝗺𝗲 𝗡𝗶𝗴𝗵𝘁 𝗦𝗵𝗶𝗳𝘁 𝟭 𝗮𝗺 𝘁𝗼 𝟱 𝗮𝗺) On-Site𝗞𝗲𝘆 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗶𝗯𝗶𝗹𝗶𝘁𝗶𝗲𝘀 • Research and evaluate emerging AI tools, platforms, and technologies relevant to digital marketing. • Implement AI-powered workflows to improve productivity and reduce repetitive manual tasks. • Develop and optimize prompts for ChatGPT, Claude, Gemini, and other generative AI platforms. • Use AI for content generation, content optimization, research, ideation, and quality improvement. • Assist the marketing team with AI-driven SEO, keyword research, competitor analysis, and content strategies. • Develop AI-based automation workflows using tools such as Make, Zapier, n8n, or similar platforms. • Identify opportunities to automate internal agency processes and client deliverables. • Experiment with AI agents, custom GPTs, chatbots, and AI assistants. • Integrate AI tools with existing marketing and business workflows where appropriate. • Monitor AI-generated content for accuracy, originality, brand alignment, and quality. • Stay updated with the latest developments in generative AI, LLMs, AI automation, and marketing technology. • Train and guide team members on effective use of AI tools. • Maintain documentation of AI workflows, prompts, automations, and best practices. • Support management in identifying new AI-powered services that can be offered to clients.𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱 𝗦𝗸𝗶𝗹𝗹𝘀 & 𝗤𝘂𝗮𝗹𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻𝘀Bachelor's degree in Computer Science, Artificial Intelligence, Software Engineering, IT, Marketing Technology, or a related field is preferred.𝗔𝗽𝗽𝗹𝘆 𝗮𝘁: 𝗺𝗮𝗻𝗮𝗴𝗶𝗻𝗴𝗱𝗶𝗿𝗲𝗰𝘁𝗼𝗿@𝘁𝗲𝗰𝗵𝗶𝗲𝘀𝗴𝗹𝗼𝗯𝗮𝗹.𝗰𝗼𝗺𝗪𝗵𝗮𝘁𝘀𝗮𝗽𝗽: 𝟬𝟯𝟬𝟴 𝟰𝟬𝟭𝟵𝟬𝟱𝟳𝗟𝗼𝗰𝗮𝘁𝗶𝗼𝗻: Wapda Town Phase 1 Lahore.`;
 
+export const isValidCompanyName = (name) => {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 35) return false;
+  const blacklist = [
+    'ai integration', 'hiring company', 'on-site', 'remote', 'hybrid', 'location', 
+    'our client', 'the moment', 'least', 'first', 'our team', 'the team', 'and', 'with', 
+    'grow your career', 'career', 'python', 'we', 'us', 'who', 'fast-growing'
+  ];
+  if (blacklist.some(b => trimmed.toLowerCase().includes(b))) return false;
+  if (/^(?:and|or|the|a|an|in|on|at|to|for|with|by|our)\b/i.test(trimmed)) return false;
+  return true;
+};
+
 export const parseRawHiringPost = (raw) => {
   if (!raw || !raw.trim()) {
     return null;
@@ -52,7 +68,7 @@ export const parseRawHiringPost = (raw) => {
   let text = raw.normalize('NFKD');
   text = text.replace(/•/g, '\n• ').replace(/·/g, '\n· ');
 
-  // 2. Recipient Email extraction (handles glued text like .comWhatsapp: 0308...)
+  // 2. Recipient Email extraction
   const emailMatch = text.match(
     /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|org|net|co\.uk|co|io|pk|edu|gov|tech|ai|dev|global)/i
   );
@@ -60,24 +76,88 @@ export const parseRawHiringPost = (raw) => {
 
   // 3. Company Name extraction
   let companyName = '';
+  // Markdown link: [Company](url)
   const mdMatch = text.match(/\[([^\]]+)\]\(https?:\/\/[^\)]+\)/);
-  if (mdMatch) {
+  if (mdMatch && isValidCompanyName(mdMatch[1])) {
     companyName = mdMatch[1].trim();
-  } else {
-    const compMatch = text.match(/(?:at|company|with)\s+([A-Z][A-Za-z0-9\s&]{2,25})/);
-    if (compMatch) {
-      companyName = compMatch[1].trim();
+  }
+
+  // "Company is hiring / looking for" (e.g. "Neuralige is looking for...")
+  if (!companyName) {
+    const isHiringMatch = text.match(/([A-Z][A-Za-z0-9&.\s]{1,30})\s+(?:is\s+(?:hiring|looking for|seeking))/i);
+    if (isHiringMatch && isValidCompanyName(isHiringMatch[1])) {
+      companyName = isHiringMatch[1].trim();
+    }
+  }
+
+  // "Join Company", "welcome to Company"
+  if (!companyName) {
+    const joinMatch = text.match(/(?:join|joining|welcome to)\s+([A-Z][A-Za-z0-9&.\s]{2,25})/i);
+    if (joinMatch && isValidCompanyName(joinMatch[1])) {
+      companyName = joinMatch[1].trim();
+    }
+  }
+
+  // "at Company", "company: Company"
+  if (!companyName) {
+    const atMatch = text.match(/(?:at|company:?|organization:?)\s+([A-Z][A-Za-z0-9&.\s]{2,25})/);
+    if (atMatch && isValidCompanyName(atMatch[1])) {
+      companyName = atMatch[1].trim();
+    }
+  }
+
+  // Fallback: Check recipient email domain (e.g. hr@neuralige.com -> Neuralige)
+  if ((!companyName || companyName === 'Hiring Company') && recipientEmail) {
+    const emailParts = recipientEmail.split('@');
+    if (emailParts.length === 2) {
+      const domain = emailParts[1].toLowerCase().trim();
+      const domainName = domain.split('.')[0];
+      const genericDomains = ['gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'proton', 'mail'];
+      if (domainName && !genericDomains.includes(domainName)) {
+        companyName = domainName.charAt(0).toUpperCase() + domainName.slice(1);
+      }
     }
   }
 
   // 4. Job Title extraction
   let jobTitle = '';
-  const titleMatch = text.match(
-    /(?:looking for|hiring(?:\s+for)?|position(?:\s+of)?|role(?:\s+of)?|opening for)\s+([A-Za-z0-9\s()\/,+-]+?)(?=(?:\s+On-Site|\s+Remote|\s+Hybrid|\s+Location|Key Responsibilities|Responsibilities|Requirements|\.|\n|$))/i
+  // Check explicit hiring headline first: e.g. "We’re Hiring: Associate Software Engineer (Python & AI)"
+  const hiringHeaderMatch = text.match(/(?:we['’]?re\s+hiring|hiring|opening|job\s+opportunity)[:\s]+([^\n\r.]+)/i);
+  if (hiringHeaderMatch) {
+    jobTitle = hiringHeaderMatch[1].trim();
+  }
+
+  if (!jobTitle) {
+    const titleMatch = text.match(
+      /(?:looking for|hiring(?:\s+for)?|position(?:\s+of)?|role(?:\s+of)?|opening for)\s+([A-Za-z0-9\s()\/,+-]+?)(?=(?:\s+On-Site|\s+Remote|\s+Hybrid|\s+Location|Key Responsibilities|Responsibilities|Requirements|\.|\n|$))/i
+    );
+    if (titleMatch) {
+      jobTitle = titleMatch[1].trim();
+    }
+  }
+
+  const knownRoleMatch = text.match(
+    /\b(?:Senior|Junior|Lead|Associate|Staff|Principal)?\s*(?:Software Engineer|Software Developer|Full[- ]?Stack Developer|Frontend Developer|Backend Developer|Python Developer|AI Engineer|AI Expert|Machine Learning Engineer|Data Scientist|Data Analyst|DevOps Engineer|QA Engineer|Mobile Developer|React Developer|Node\.js Developer)\b/i
   );
-  if (titleMatch) {
-    jobTitle = titleMatch[1].trim();
-  } else {
+
+  if (jobTitle) {
+    // Cut off qualification clauses like 'with a strong foundation...', 'who...', 'having...'
+    jobTitle = jobTitle.split(/\s+(?:with|who|having|to join|responsible for|seeking)\b/i)[0].trim();
+    // Strip leading filler adjectives like 'an enthusiastic', 'a skilled', etc.
+    jobTitle = jobTitle.replace(/^(?:an?|the)\s+(?:enthusiastic|motivated|passionate|experienced|talented|skilled|dynamic|exceptional|energetic|dedicated|driven|seasoned)?\s*/i, '').trim();
+    // Strip trailing punctuation
+    jobTitle = jobTitle.replace(/[,;:-]+$/, '').trim();
+  }
+
+  if ((!jobTitle || jobTitle.length > 50) && knownRoleMatch) {
+    jobTitle = knownRoleMatch[0].trim();
+  } else if (knownRoleMatch && jobTitle.toLowerCase().includes(knownRoleMatch[0].toLowerCase())) {
+    if (jobTitle.length > knownRoleMatch[0].length + 35) {
+      jobTitle = knownRoleMatch[0].trim();
+    }
+  }
+
+  if (!jobTitle) {
     const firstLine = text.split('\n')[0];
     jobTitle = firstLine.substring(0, 50).trim();
   }
@@ -85,7 +165,7 @@ export const parseRawHiringPost = (raw) => {
   // 5. Requirements extraction
   let requirements = '';
   const reqMatch = text.match(
-    /(?:Key Responsibilities|Responsibilities|Required Skills|Requirements)[:\s]*([\s\S]*?)(?=(?:Apply at|Location|Whatsapp|Salary|$))/i
+    /(?:Key Responsibilities|Responsibilities|Required Skills|Requirements)[:\s]*([\s\S]*?)(?=(?:Apply at|Location|Whatsapp|Salary|How to Apply|$))/i
   );
   if (reqMatch) {
     requirements = reqMatch[1].trim();
@@ -94,7 +174,7 @@ export const parseRawHiringPost = (raw) => {
   }
 
   return {
-    jobTitle: jobTitle || 'AI Expert',
+    jobTitle: jobTitle || 'Software Engineer',
     companyName: companyName || 'Hiring Company',
     recipientEmail: recipientEmail || '',
     requirements: requirements.trim(),
@@ -275,8 +355,29 @@ export default function App() {
   // History State (Synced with Supabase DB)
   const [applications, setApplications] = useState([]);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [isEditingApplication, setIsEditingApplication] = useState(false);
+  const [editForm, setEditForm] = useState({
+    jobTitle: '',
+    companyName: '',
+    recipientEmail: '',
+    generatedEmail: '',
+  });
+  const [isSavingEdits, setIsSavingEdits] = useState(false);
   const [isSyncingHistory, setIsSyncingHistory] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState(null);
+
+  useEffect(() => {
+    if (selectedRecord) {
+      setEditForm({
+        jobTitle: selectedRecord.jobTitle || '',
+        companyName: selectedRecord.companyName || '',
+        recipientEmail: selectedRecord.recipientEmail || '',
+        generatedEmail: htmlToPlainText(selectedRecord.generatedEmail),
+      });
+    } else {
+      setIsEditingApplication(false);
+    }
+  }, [selectedRecord?.id, selectedRecord?.generatedEmail]);
 
   const loadUserData = React.useCallback(async (userId, userEmail) => {
     const userSettings = await getSettings(userId);
@@ -692,8 +793,26 @@ export default function App() {
     if (!appRecord || isSending) return;
     setIsSending(true);
     try {
+      // If user edited fields before sending, persist them first so email uses human-corrected version!
+      let activeRecord = { ...appRecord };
+      if (isEditingApplication && editForm) {
+        try {
+          const updatedList = await updateFullApplication(session?.user?.id, appRecord.id, editForm);
+          if (updatedList) setApplications(updatedList);
+          activeRecord = {
+            ...appRecord,
+            jobTitle: editForm.jobTitle.trim() || appRecord.jobTitle,
+            companyName: editForm.companyName.trim() || appRecord.companyName,
+            recipientEmail: editForm.recipientEmail.trim() || appRecord.recipientEmail,
+            generatedEmail: editForm.generatedEmail.trim() || appRecord.generatedEmail,
+          };
+          setSelectedRecord(activeRecord);
+          setIsEditingApplication(false);
+        } catch (_saveErr) {}
+      }
+
       // Get the applications_email id
-      const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, appRecord.id);
+      const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, activeRecord.id);
       const applications_email_id = emailRecord ? emailRecord.id : null;
 
       if (!applications_email_id) {
@@ -701,20 +820,20 @@ export default function App() {
       }
 
       if (settings?.googleConnectedAt) {
-        const recipient = appRecord.recipientEmail || appRecord.recipient_email;
+        const recipient = activeRecord.recipientEmail || activeRecord.recipient_email;
         if (!recipient) {
           throw new Error('Recipient email address is missing for this application.');
         }
 
-        const jobTitle = appRecord.jobTitle || appRecord.job_title || 'Software Developer';
+        const jobTitle = activeRecord.jobTitle || activeRecord.job_title || 'Software Developer';
         const subject = emailRecord?.subject || `Job Application: ${jobTitle} - ${profile?.fullName || 'Applicant'}`;
-        const body = emailRecord?.body || appRecord.generatedEmail || appRecord.generated_email || 'Please find my job application attached.';
+        const body = activeRecord.generatedEmail || emailRecord?.body || 'Please find my job application attached.';
 
         await sendEmail({
           to: recipient,
           subject,
           body,
-          applicationId: appRecord.id,
+          applicationId: activeRecord.id,
           applicationEmailId: applications_email_id,
         });
 
@@ -728,7 +847,11 @@ export default function App() {
           body: JSON.stringify({ 
             applications_email_id,
             user_id: session?.user?.id,
-            application_id: appRecord.id
+            application_id: activeRecord.id,
+            jobTitle: activeRecord.jobTitle,
+            companyName: activeRecord.companyName,
+            recipientEmail: activeRecord.recipientEmail,
+            email_body: activeRecord.generatedEmail,
           }),
         });
         Alert.alert('Success', 'Email triggered successfully via webhook!');
@@ -736,26 +859,53 @@ export default function App() {
 
       // Update status to Applied in database & state immediately
       const appliedTime = new Date().toISOString();
-      const updated = { ...appRecord, status: 'Applied', appliedAt: appliedTime };
-      const updatedList = await updateApplicationStatus(session?.user?.id, appRecord.id, 'Applied');
+      const updated = { ...activeRecord, status: 'Applied', appliedAt: appliedTime };
+      const updatedList = await updateApplicationStatus(session?.user?.id, activeRecord.id, 'Applied');
       if (updatedList) setApplications(updatedList);
 
       // Clear the form fields and sync generated/selected state
-      if (generatedResult?.id === appRecord.id || !selectedRecord) {
+      if (generatedResult?.id === activeRecord.id || !selectedRecord) {
         clearApplicationForm();
         setGeneratedResult(null);
       }
 
-      if (selectedRecord?.id === appRecord.id) {
+      if (selectedRecord?.id === activeRecord.id) {
         setSelectedRecord(updated);
       }
-      if (generatedResult?.id === appRecord.id) {
+      if (generatedResult?.id === activeRecord.id) {
         setGeneratedResult(updated);
       }
     } catch (e) {
       Alert.alert('Send Error', 'Failed to send email: ' + e.message);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // Save manual edits to application & email pitch
+  const handleSaveEdits = async () => {
+    if (!selectedRecord?.id || isSavingEdits) return;
+    setIsSavingEdits(true);
+    try {
+      const updatedList = await updateFullApplication(session?.user?.id, selectedRecord.id, editForm);
+      if (updatedList) setApplications(updatedList);
+      const updatedRecord = {
+        ...selectedRecord,
+        jobTitle: editForm.jobTitle.trim() || selectedRecord.jobTitle,
+        companyName: editForm.companyName.trim() || selectedRecord.companyName,
+        recipientEmail: editForm.recipientEmail.trim() || selectedRecord.recipientEmail,
+        generatedEmail: editForm.generatedEmail.trim() || selectedRecord.generatedEmail,
+      };
+      setSelectedRecord(updatedRecord);
+      if (generatedResult?.id === selectedRecord.id) {
+        setGeneratedResult(updatedRecord);
+      }
+      setIsEditingApplication(false);
+      Alert.alert('Success', 'Application updated successfully!');
+    } catch (err) {
+      Alert.alert('Save Error', 'Error saving edits: ' + err.message);
+    } finally {
+      setIsSavingEdits(false);
     }
   };
 
@@ -1661,87 +1811,206 @@ export default function App() {
         )}
       </ScrollView>
 
-      {/* Record Modal */}
+      {/* Record Modal with Human Correction / Edit Mode */}
       {selectedRecord && (
         <Modal transparent animationType="slide" visible={!!selectedRecord}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <Text style={styles.modalHeading}>{selectedRecord.jobTitle}</Text>
-                <TouchableOpacity onPress={() => setSelectedRecord(null)}>
-                  <Text style={styles.modalCloseText}>Close</Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>
-                {selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient'}
-              </Text>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginRight: 2 }}>Status:</Text>
-                {['Draft', 'Generated', 'Applied', 'Interviewing', 'Accepted', 'Rejected'].map((st) => (
+                <Text style={styles.modalHeading}>
+                  {isEditingApplication ? 'Edit Application' : selectedRecord.jobTitle}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <TouchableOpacity
-                    key={st}
                     style={{
-                      paddingVertical: 3,
                       paddingHorizontal: 8,
-                      borderRadius: 12,
-                      backgroundColor: selectedRecord.status === st ? '#2563eb' : '#f1f5f9',
+                      paddingVertical: 4,
+                      borderRadius: 6,
+                      backgroundColor: isEditingApplication ? '#eff6ff' : '#f1f5f9',
                     }}
-                    onPress={() => handleStatusChange(selectedRecord.id, st)}
+                    onPress={() => {
+                      if (!isEditingApplication) {
+                        setEditForm({
+                          jobTitle: selectedRecord.jobTitle || '',
+                          companyName: selectedRecord.companyName || '',
+                          recipientEmail: selectedRecord.recipientEmail || '',
+                          generatedEmail: htmlToPlainText(selectedRecord.generatedEmail),
+                        });
+                        setIsEditingApplication(true);
+                      } else {
+                        setIsEditingApplication(false);
+                      }
+                    }}
                   >
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: selectedRecord.status === st ? '#ffffff' : '#475569' }}>
-                      {st}
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: isEditingApplication ? '#2563eb' : '#475569' }}>
+                      {isEditingApplication ? '👁️ Preview' : '✏️ Edit'}
                     </Text>
                   </TouchableOpacity>
-                ))}
+                  <TouchableOpacity onPress={() => setSelectedRecord(null)}>
+                    <Text style={styles.modalCloseText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
-                {selectedRecord.isLoadingEmail ? (
-                  <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
-                    <Text style={{ fontSize: 13, color: '#64748b' }}>Loading email content...</Text>
-                  </View>
-                ) : selectedRecord.generatedEmail ? (
-                  selectedRecord.generatedEmail.includes('<') && selectedRecord.generatedEmail.includes('>') ? (
-                    <RenderHtml
-                      contentWidth={width}
-                      source={{ html: selectedRecord.generatedEmail }}
-                      baseStyle={{ color: '#334155', fontSize: 14 }}
-                    />
-                  ) : (
-                    <Text style={{ color: '#334155', fontSize: 14, lineHeight: 20 }}>
-                      {selectedRecord.generatedEmail}
-                    </Text>
-                  )
-                ) : (
-                  <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
-                    <Text style={{ fontSize: 13, color: '#64748b' }}>Email is generating or being fetched...</Text>
-                  </View>
-                )}
-              </ScrollView>
+              {!isEditingApplication ? (
+                <>
+                  <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>
+                    {selectedRecord.companyName} • {selectedRecord.recipientEmail || 'No recipient'}
+                  </Text>
 
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-                <TouchableOpacity 
-                  style={[styles.primaryBtn, { flex: 1 }, isSending && styles.disabledBtn]}
-                  onPress={() => handleSendEmail(selectedRecord)}
-                  disabled={isSending}
-                >
-                  {isSending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryBtnText}>Send email</Text>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.outlineBtn, { flex: 1 }]}
-                  onPress={() => setSelectedRecord(null)}
-                >
-                  <Text style={styles.outlineBtnText}>Close</Text>
-                </TouchableOpacity>
-              </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginRight: 2 }}>Status:</Text>
+                    {['Draft', 'Generated', 'Applied', 'Interviewing', 'Accepted', 'Rejected'].map((st) => (
+                      <TouchableOpacity
+                        key={st}
+                        style={{
+                          paddingVertical: 3,
+                          paddingHorizontal: 8,
+                          borderRadius: 12,
+                          backgroundColor: selectedRecord.status === st ? '#2563eb' : '#f1f5f9',
+                        }}
+                        onPress={() => handleStatusChange(selectedRecord.id, st)}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: selectedRecord.status === st ? '#ffffff' : '#475569' }}>
+                          {st}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
+                    {selectedRecord.isLoadingEmail ? (
+                      <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
+                        <Text style={{ fontSize: 13, color: '#64748b' }}>Loading email content...</Text>
+                      </View>
+                    ) : selectedRecord.generatedEmail ? (
+                      selectedRecord.generatedEmail.includes('<') && selectedRecord.generatedEmail.includes('>') ? (
+                        <RenderHtml
+                          contentWidth={width}
+                          source={{ html: selectedRecord.generatedEmail }}
+                          baseStyle={{ color: '#334155', fontSize: 14 }}
+                        />
+                      ) : (
+                        <Text style={{ color: '#334155', fontSize: 14, lineHeight: 20 }}>
+                          {selectedRecord.generatedEmail}
+                        </Text>
+                      )
+                    ) : (
+                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
+                        <Text style={{ fontSize: 13, color: '#64748b' }}>Email is generating or being fetched...</Text>
+                      </View>
+                    )}
+                  </ScrollView>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                    <TouchableOpacity 
+                      style={[styles.outlineBtn, { flex: 1 }]}
+                      onPress={() => {
+                        setEditForm({
+                          jobTitle: selectedRecord.jobTitle || '',
+                          companyName: selectedRecord.companyName || '',
+                          recipientEmail: selectedRecord.recipientEmail || '',
+                          generatedEmail: htmlToPlainText(selectedRecord.generatedEmail),
+                        });
+                        setIsEditingApplication(true);
+                      }}
+                    >
+                      <Text style={[styles.outlineBtnText, { color: '#2563eb' }]}>✏️ Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.primaryBtn, { flex: 1 }, isSending && styles.disabledBtn]}
+                      onPress={() => handleSendEmail(selectedRecord)}
+                      disabled={isSending}
+                    >
+                      {isSending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.primaryBtnText}>Send email</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <ScrollView style={{ maxHeight: 380, marginVertical: 4 }}>
+                    <View style={{ gap: 10 }}>
+                      <View>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Job Title</Text>
+                        <TextInput
+                          style={[styles.input, { height: 40 }]}
+                          value={editForm.jobTitle}
+                          onChangeText={(val) => setEditForm(prev => ({ ...prev, jobTitle: val }))}
+                          placeholder="Job Title"
+                        />
+                      </View>
+                      <View>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Company Name</Text>
+                        <TextInput
+                          style={[styles.input, { height: 40 }]}
+                          value={editForm.companyName}
+                          onChangeText={(val) => setEditForm(prev => ({ ...prev, companyName: val }))}
+                          placeholder="Company Name"
+                        />
+                      </View>
+                      <View>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Recipient Email</Text>
+                        <TextInput
+                          style={[styles.input, { height: 40 }]}
+                          value={editForm.recipientEmail}
+                          onChangeText={(val) => setEditForm(prev => ({ ...prev, recipientEmail: val }))}
+                          placeholder="Recipient Email"
+                          keyboardType="email-address"
+                        />
+                      </View>
+                      <View>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 4 }}>Email Pitch</Text>
+                        <TextInput
+                          multiline
+                          style={[styles.input, { minHeight: 180, textAlignVertical: 'top' }]}
+                          value={editForm.generatedEmail}
+                          onChangeText={(val) => setEditForm(prev => ({ ...prev, generatedEmail: val }))}
+                          placeholder="Personalized pitch..."
+                        />
+                      </View>
+                    </View>
+                  </ScrollView>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity 
+                      style={[styles.outlineBtn, { flex: 1 }]}
+                      onPress={() => setIsEditingApplication(false)}
+                    >
+                      <Text style={styles.outlineBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[styles.primaryBtn, { flex: 1, backgroundColor: '#0284c7' }]}
+                      onPress={handleSaveEdits}
+                      disabled={isSavingEdits}
+                    >
+                      {isSavingEdits ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.primaryBtnText}>Save</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[styles.primaryBtn, { flex: 1 }, isSending && styles.disabledBtn]}
+                      onPress={() => handleSendEmail(selectedRecord)}
+                      disabled={isSending}
+                    >
+                      {isSending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.primaryBtnText}>Save & Send</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         </Modal>

@@ -665,6 +665,122 @@ export async function saveApplication(userId, application) {
   return updated;
 }
 
+export function htmlToPlainText(html) {
+  if (!html || typeof html !== 'string') return '';
+  if (!html.includes('<') || !html.includes('>')) return html;
+  let text = html;
+  text = text.replace(/<br\s*[\/]?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n\n');
+  text = text.replace(/<li>/gi, '• ');
+  text = text.replace(/<\/li>/gi, '\n');
+  text = text.replace(/<\/h[1-6]>/gi, '\n\n');
+  text = text.replace(/<[^>]*>/g, '');
+  text = text.replace(/&nbsp;/g, ' ');
+  text = text.replace(/&amp;/g, '&');
+  text = text.replace(/&lt;/g, '<');
+  text = text.replace(/&gt;/g, '>');
+  text = text.replace(/&quot;/g, '"');
+  text = text.replace(/&#39;/g, "'");
+  text = text.replace(/\n{3,}/g, '\n\n');
+  return text.trim();
+}
+
+/**
+ * Updates full application details (jobTitle, companyName, recipientEmail, generatedEmail)
+ * across applications and application_emails tables, returning fresh applications list.
+ */
+export async function updateFullApplication(userId, applicationId, updates) {
+  if (!applicationId) return [];
+  const now = new Date().toISOString();
+
+  const appPayload = {
+    updated_at: now,
+  };
+  if (updates.jobTitle !== undefined) appPayload.job_title = updates.jobTitle.trim();
+  if (updates.companyName !== undefined) appPayload.company_name = updates.companyName.trim();
+  if (updates.recipientEmail !== undefined) appPayload.recipient_email = updates.recipientEmail.trim();
+  if (updates.status !== undefined) {
+    appPayload.status = updates.status;
+    if (updates.status === 'Applied') appPayload.applied_at = now;
+  }
+
+  // 1. Sync to Supabase
+  if (userId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
+      if (isUuid) {
+        await supabase
+          .from('applications')
+          .update(appPayload)
+          .eq('id', applicationId)
+          .eq('user_id', userId);
+
+        if (updates.generatedEmail !== undefined) {
+          const emailContent = updates.generatedEmail;
+          let subject = null;
+          if (emailContent.toLowerCase().startsWith('subject:')) {
+            const firstNewline = emailContent.indexOf('\n');
+            if (firstNewline !== -1) {
+              subject = emailContent.substring(8, firstNewline).trim();
+            }
+          }
+
+          const { data: existingEmails } = await supabase
+            .from('application_emails')
+            .select('id')
+            .eq('application_id', applicationId)
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (existingEmails && existingEmails.length > 0) {
+            const emailUpdate = { body: emailContent, updated_at: now };
+            if (subject) emailUpdate.subject = subject;
+            await supabase
+              .from('application_emails')
+              .update(emailUpdate)
+              .eq('id', existingEmails[0].id);
+          } else {
+            await supabase
+              .from('application_emails')
+              .insert({
+                application_id: applicationId,
+                user_id: userId,
+                subject: subject || `Job Application: ${updates.jobTitle || 'Role'}`,
+                body: emailContent,
+                status: 'pending',
+                created_at: now,
+              });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase updateFullApplication error:', err.message);
+    }
+
+    return await getApplications(userId);
+  }
+
+  // 2. Fallback to local cache
+  try {
+    const key = `${APPLICATIONS_KEY}_${userId}`;
+    const current = await getApplications(userId);
+    const updated = current.map((i) =>
+      i.id === applicationId
+        ? {
+            ...i,
+            ...updates,
+            updatedAt: now,
+          }
+        : i
+    );
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+    return updated;
+  } catch (_e) {
+    return [];
+  }
+}
+
 export async function deleteApplication(userId, applicationId) {
   if (!applicationId) return [];
 
