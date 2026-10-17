@@ -43,6 +43,8 @@ import {
   checkSessionStatus,
   setupSessionTracking,
 } from './services/sessionManager';
+import CustomAlertModal from './components/CustomAlertModal';
+
 export const SAMPLE_HIRING_POST = `[Techies Global](https://www.linkedin.com/company/techies-global/) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁 (𝗣𝗮𝗿𝘁 𝘁𝗶𝗺𝗲 𝗡𝗶𝗴𝗵𝘁 𝗦𝗵𝗶𝗳𝘁 𝟭 𝗮𝗺 𝘁𝗼 𝟱 𝗮𝗺) On-Site𝗞𝗲𝘆 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗶𝗯𝗶𝗹𝗶𝘁𝗶𝗲𝘀 • Research and evaluate emerging AI tools, platforms, and technologies relevant to digital marketing. • Implement AI-powered workflows to improve productivity and reduce repetitive manual tasks. • Develop and optimize prompts for ChatGPT, Claude, Gemini, and other generative AI platforms. • Use AI for content generation, content optimization, research, ideation, and quality improvement. • Assist the marketing team with AI-driven SEO, keyword research, competitor analysis, and content strategies. • Develop AI-based automation workflows using tools such as Make, Zapier, n8n, or similar platforms. • Identify opportunities to automate internal agency processes and client deliverables. • Experiment with AI agents, custom GPTs, chatbots, and AI assistants. • Integrate AI tools with existing marketing and business workflows where appropriate. • Monitor AI-generated content for accuracy, originality, brand alignment, and quality. • Stay updated with the latest developments in generative AI, LLMs, AI automation, and marketing technology. • Train and guide team members on effective use of AI tools. • Maintain documentation of AI workflows, prompts, automations, and best practices. • Support management in identifying new AI-powered services that can be offered to clients.𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱 𝗦𝗸𝗶𝗹𝗹𝘀 & 𝗤𝘂𝗮𝗹𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻𝘀Bachelor's degree in Computer Science, Artificial Intelligence, Software Engineering, IT, Marketing Technology, or a related field is preferred.𝗔𝗽𝗽𝗹𝘆 𝗮𝘁: 𝗺𝗮𝗻𝗮𝗴𝗶𝗻𝗴𝗱𝗶𝗿𝗲𝗰𝘁𝗼𝗿@𝘁𝗲𝗰𝗵𝗶𝗲𝘀𝗴𝗹𝗼𝗯𝗮𝗹.𝗰𝗼𝗺𝗪𝗵𝗮𝘁𝘀𝗮𝗽𝗽: 𝟬𝟯𝟬𝟴 𝟰𝟬𝟭𝟵𝟬𝟱𝟳𝗟𝗼𝗰𝗮𝘁𝗶𝗼𝗻: Wapda Town Phase 1 Lahore.`;
 
 export const isValidCompanyName = (name) => {
@@ -184,6 +186,65 @@ export const parseRawHiringPost = (raw) => {
 
 export default function App() {
   const { width } = useWindowDimensions();
+
+  // Custom Alert & Popup State
+  const [alertConfig, setAlertConfig] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info',
+    confirmText: '',
+    cancelText: 'Cancel',
+    onConfirm: null,
+    onCancel: null,
+  });
+
+  const showAlert = React.useCallback((message, title = 'Notice', type = 'info') => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      type,
+      confirmText: 'Got it',
+      cancelText: 'Cancel',
+      onConfirm: () => setAlertConfig((prev) => ({ ...prev, visible: false })),
+      onCancel: null,
+    });
+  }, []);
+
+  const showSuccess = React.useCallback(
+    (message, title = 'Success') => {
+      showAlert(message, title, 'success');
+    },
+    [showAlert]
+  );
+
+  const showError = React.useCallback(
+    (message, title = 'Notice') => {
+      showAlert(message, title, 'error');
+    },
+    [showAlert]
+  );
+
+  const showConfirm = React.useCallback(
+    ({ title = 'Are you sure?', message, confirmText = 'Confirm', onConfirm }) => {
+      setAlertConfig({
+        visible: true,
+        title,
+        message,
+        type: 'confirm',
+        confirmText,
+        cancelText: 'Cancel',
+        onConfirm: () => {
+          setAlertConfig((prev) => ({ ...prev, visible: false }));
+          if (onConfirm) onConfirm();
+        },
+        onCancel: () => setAlertConfig((prev) => ({ ...prev, visible: false })),
+      });
+    },
+    []
+  );
+
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -263,7 +324,7 @@ export default function App() {
 
   const handleParseAndPopulate = async (andSubmit = false) => {
     if (!rawJobPost.trim()) {
-      Alert.alert('Notice', 'Please paste a raw job posting first.');
+      showError('Please paste a raw job posting first.', 'Input Required');
       return;
     }
 
@@ -454,7 +515,7 @@ export default function App() {
       setSession(null);
       setIsAuthenticated(false);
       setAuthError(reason || 'Your session has expired. Please log in again.');
-      Alert.alert('Session Expired', reason || 'Your session has expired. Please log in again.');
+      showError(reason || 'Your session has expired. Please log in again.', 'Session Expired');
     });
 
     return cleanup;
@@ -521,11 +582,11 @@ export default function App() {
     try {
       await saveProfile(session?.user?.id, profile);
       setProfileFeedback('Profile details saved successfully!');
-      Alert.alert('Saved', 'Profile details and links saved successfully!');
+      showSuccess('Profile details and links saved successfully!', 'Saved');
       setTimeout(() => setProfileFeedback(''), 3000);
     } catch (err) {
       setProfileFeedback('Failed to save: ' + err.message);
-      Alert.alert('Error', 'Failed to save profile: ' + err.message);
+      showError('Failed to save profile: ' + err.message, 'Save Error');
     } finally {
       setIsSavingProfile(false);
     }
@@ -540,15 +601,18 @@ export default function App() {
 
     if (section === 'resume') {
       setIsSavingResume(false);
-      Alert.alert(success ? 'Saved' : 'Error', success ? 'Resume saved successfully!' : 'Failed to save resume.');
+      if (success) showSuccess('Resume saved successfully!', 'Saved');
+      else showError('Failed to save resume.', 'Save Error');
     }
     if (section === 'llm') {
       setIsSavingLlm(false);
-      Alert.alert(success ? 'Saved' : 'Error', success ? 'AI model preferences saved!' : 'Failed to save preferences.');
+      if (success) showSuccess('AI model preferences saved!', 'Saved');
+      else showError('Failed to save preferences.', 'Save Error');
     }
     if (section === 'google') {
       setIsSavingGoogle(false);
-      Alert.alert(success ? 'Saved' : 'Error', success ? 'Gmail & Google credentials saved!' : 'Failed to save credentials.');
+      if (success) showSuccess('Gmail & Google credentials saved!', 'Saved');
+      else showError('Failed to save credentials.', 'Save Error');
     }
   };
 
@@ -572,16 +636,16 @@ export default function App() {
         if (session?.user?.id) {
           try {
             await saveSettings(session.user.id, updated);
-            Alert.alert('Resume Selected', `Attached & saved: ${file.name}`);
+            showSuccess(`Attached & saved: ${file.name}`, 'Resume Selected');
           } catch (_e) {
-            Alert.alert('Resume Selected', `Attached: ${file.name}`);
+            showSuccess(`Attached: ${file.name}`, 'Resume Selected');
           }
         } else {
-          Alert.alert('Resume Selected', `Attached: ${file.name}`);
+          showSuccess(`Attached: ${file.name}`, 'Resume Selected');
         }
       }
     } catch (e) {
-      Alert.alert('File Picker Error', e.message);
+      showError(e.message, 'File Picker Error');
     }
   };
 
@@ -599,7 +663,7 @@ export default function App() {
     const activeDescription = (overrideFields?.description || description || '').trim();
 
     if (!activeJobTitle) {
-      Alert.alert('Missing Field', 'Please enter a Job Title.');
+      showError('Please enter a Job Title.', 'Missing Field');
       return;
     }
 
@@ -611,7 +675,7 @@ export default function App() {
     }
 
     if (!userId) {
-      Alert.alert('Authentication required', 'Please sign in to submit.');
+      showError('Please sign in to submit.', 'Authentication Required');
       return;
     }
 
@@ -780,9 +844,9 @@ export default function App() {
         }
         setIsGenerating(false);
         setShowCountdownPopup(false);
-        Alert.alert(
-          'Generation Timeout',
-          'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.'
+        showError(
+          'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.',
+          'Generation Timeout'
         );
       }
     }, 2000);
@@ -837,7 +901,7 @@ export default function App() {
           applicationEmailId: applications_email_id,
         });
 
-        Alert.alert('Success', 'Application email sent directly via your connected Gmail!');
+        showSuccess('Application email sent directly via your connected Gmail!', 'Success');
       } else {
         await fetch('https://n8n.flyinvict.com/webhook/42066edc-2634-4eec-9db9-6b20c2932d56', {
           method: 'POST',
@@ -854,7 +918,7 @@ export default function App() {
             email_body: activeRecord.generatedEmail,
           }),
         });
-        Alert.alert('Success', 'Email triggered successfully via webhook!');
+        showSuccess('Email triggered successfully via webhook!', 'Success');
       }
 
       // Update status to Applied in database & state immediately
@@ -876,7 +940,7 @@ export default function App() {
         setGeneratedResult(updated);
       }
     } catch (e) {
-      Alert.alert('Send Error', 'Failed to send email: ' + e.message);
+      showError('Failed to send email: ' + e.message, 'Send Error');
     } finally {
       setIsSending(false);
     }
@@ -901,28 +965,26 @@ export default function App() {
         setGeneratedResult(updatedRecord);
       }
       setIsEditingApplication(false);
-      Alert.alert('Success', 'Application updated successfully!');
+      showSuccess('Application updated successfully!', 'Saved');
     } catch (err) {
-      Alert.alert('Save Error', 'Error saving edits: ' + err.message);
+      showError('Error saving edits: ' + err.message, 'Save Error');
     } finally {
       setIsSavingEdits(false);
     }
   };
 
   // Delete Record
-  const handleDeleteRecord = async (id) => {
-    Alert.alert('Confirm Delete', 'Are you sure you want to delete this application record?', [
-      { text: 'Cancel', style: 'cancel' },
-      { 
-        text: 'Delete', 
-        style: 'destructive',
-        onPress: async () => {
-          const updated = await deleteApplication(session?.user?.id, id);
-          if (updated) setApplications(updated);
-          if (selectedRecord?.id === id) setSelectedRecord(null);
-        }
-      }
-    ]);
+  const handleDeleteRecord = (id) => {
+    showConfirm({
+      title: 'Delete Application',
+      message: 'Are you sure you want to delete this application record? This action cannot be undone.',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        const updated = await deleteApplication(session?.user?.id, id);
+        if (updated) setApplications(updated);
+        if (selectedRecord?.id === id) setSelectedRecord(null);
+      },
+    });
   };
 
   const handleOpenRecord = async (item) => {
@@ -2060,6 +2122,12 @@ export default function App() {
           </View>
         </Modal>
       )}
+
+      {/* Custom Modern Alert & Popup Modal */}
+      <CustomAlertModal
+        {...alertConfig}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, visible: false }))}
+      />
     </SafeAreaView>
   );
 }

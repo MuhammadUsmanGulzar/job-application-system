@@ -39,6 +39,7 @@ import {
   checkSessionStatus,
   setupSessionTracking,
 } from './services/sessionManager';
+import CustomAlertModal from './components/CustomAlertModal';
 
 export const getStatusBadgeStyle = (status) => {
   switch (status) {
@@ -194,6 +195,56 @@ export const parseRawHiringPost = (raw) => {
 export default function AppWeb() {
   const { width } = useWindowDimensions();
   const isCompact = width < 980;
+
+  // Custom Alert & Popup State
+  const [alertConfig, setAlertConfig] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info',
+    confirmText: '',
+    cancelText: 'Cancel',
+    onConfirm: null,
+    onCancel: null,
+  });
+
+  const showAlert = React.useCallback((message, title = 'Notice', type = 'info') => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      type,
+      confirmText: 'Got it',
+      cancelText: 'Cancel',
+      onConfirm: () => setAlertConfig(prev => ({ ...prev, visible: false })),
+      onCancel: null,
+    });
+  }, []);
+
+  const showSuccess = React.useCallback((message, title = 'Success') => {
+    showAlert(message, title, 'success');
+  }, [showAlert]);
+
+  const showError = React.useCallback((message, title = 'Notice') => {
+    showAlert(message, title, 'error');
+  }, [showAlert]);
+
+  const showConfirm = React.useCallback(({ title = 'Are you sure?', message, confirmText = 'Confirm', onConfirm }) => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      type: 'confirm',
+      confirmText,
+      cancelText: 'Cancel',
+      onConfirm: () => {
+        setAlertConfig(prev => ({ ...prev, visible: false }));
+        if (onConfirm) onConfirm();
+      },
+      onCancel: () => setAlertConfig(prev => ({ ...prev, visible: false })),
+    });
+  }, []);
+
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -278,7 +329,7 @@ export default function AppWeb() {
 
   const handleParseAndPopulate = async (andSubmit = false) => {
     if (!rawJobPost.trim()) {
-      window.alert('Please paste a raw job posting first.');
+      showError('Please paste a raw job posting first.', 'Input Required');
       return;
     }
 
@@ -382,6 +433,8 @@ export default function AppWeb() {
   const [isSyncingHistory, setIsSyncingHistory] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState(null);
 
+
+
   useEffect(() => {
     if (selectedRecord) {
       setEditForm({
@@ -473,7 +526,7 @@ export default function AppWeb() {
       setSession(null);
       setIsAuthenticated(false);
       setAuthError(reason || 'Your session has expired. Please sign in again.');
-      window.alert(reason || 'Your session has expired. Please sign in again.');
+      showError(reason || 'Your session has expired. Please sign in again.', 'Session Expired');
     });
 
     return cleanup;
@@ -689,7 +742,7 @@ export default function AppWeb() {
     const activeDescription = (overrideFields?.description || description || '').trim();
 
     if (!activeJobTitle) {
-      window.alert('Please enter a Job Title.');
+      showError('Please enter a Job Title.', 'Missing Field');
       return;
     }
 
@@ -701,7 +754,7 @@ export default function AppWeb() {
     }
 
     if (!userId) {
-      window.alert('Authentication required. Please sign in to submit.');
+      showError('Authentication required. Please sign in to submit.', 'Authentication Required');
       return;
     }
 
@@ -873,8 +926,9 @@ export default function AppWeb() {
         }
         setIsGenerating(false);
         setShowCountdownPopup(false);
-        window.alert(
-          'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.'
+        showError(
+          'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.',
+          'Generation Notice'
         );
       }
     }, 2000);
@@ -929,7 +983,7 @@ export default function AppWeb() {
           applicationEmailId: applications_email_id,
         });
 
-        window.alert('Application email sent directly via your connected Gmail!');
+        showSuccess('Application email sent directly via your connected Gmail!', 'Email Sent');
       } else {
         await fetch('https://n8n.flyinvict.com/webhook/42066edc-2634-4eec-9db9-6b20c2932d56', {
           method: 'POST',
@@ -946,7 +1000,7 @@ export default function AppWeb() {
             email_body: activeRecord.generatedEmail,
           }),
         });
-        window.alert('Email triggered successfully via webhook!');
+        showSuccess('Email triggered successfully via webhook!', 'Webhook Triggered');
       }
 
       // Update status to Applied in database & state immediately
@@ -968,7 +1022,7 @@ export default function AppWeb() {
         setGeneratedResult(updated);
       }
     } catch (e) {
-      window.alert('Failed to send email: ' + e.message);
+      showError('Failed to send email: ' + e.message, 'Send Error');
     } finally {
       setIsSending(false);
     }
@@ -993,28 +1047,33 @@ export default function AppWeb() {
         setGeneratedResult(updatedRecord);
       }
       setIsEditingApplication(false);
-      window.alert('Application updated successfully!');
+      showSuccess('Application updated successfully!', 'Saved');
     } catch (err) {
-      window.alert('Error saving edits: ' + err.message);
+      showError('Error saving edits: ' + err.message, 'Save Error');
     } finally {
       setIsSavingEdits(false);
     }
   };
 
   // Delete Record
-  const handleDeleteRecord = async (id) => {
-    if (window.confirm('Are you sure you want to remove this application record?')) {
-      const updated = await deleteApplication(session?.user?.id, id);
-      if (updated) setApplications(updated);
-      if (selectedRecord?.id === id) setSelectedRecord(null);
-    }
+  const handleDeleteRecord = (id) => {
+    showConfirm({
+      title: 'Delete Application',
+      message: 'Are you sure you want to remove this application record? This action cannot be undone.',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        const updated = await deleteApplication(session?.user?.id, id);
+        if (updated) setApplications(updated);
+        if (selectedRecord?.id === id) setSelectedRecord(null);
+      },
+    });
   };
 
   // Copy to clipboard
   const handleCopy = (text) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(text);
-      window.alert('Copied to clipboard!');
+      showSuccess('Copied to clipboard!', 'Copied');
     }
   };
 
@@ -2430,6 +2489,12 @@ export default function AppWeb() {
           </View>
         </Modal>
       )}
+
+      {/* Custom Modern Alert & Popup Modal */}
+      <CustomAlertModal
+        {...alertConfig}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, visible: false }))}
+      />
     </View>
   );
 }
