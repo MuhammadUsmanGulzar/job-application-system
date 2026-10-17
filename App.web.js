@@ -33,7 +33,8 @@ import {
   fetchUserResume,
   updateResumeContent,
   tailorResumeForJob,
-  syncResumeFromBucket
+  syncResumeFromBucket,
+  getResumeFileUrl
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
@@ -312,8 +313,10 @@ export default function AppWeb() {
   // Resume Viewer & AI Tailor Agent State
   const [isTailoringResume, setIsTailoringResume] = useState(false);
   const [resumeTailorResult, setResumeTailorResult] = useState(null);
-  const [resumeViewMode, setResumeViewMode] = useState('preview'); // 'preview' | 'edit'
+  const [resumeViewMode, setResumeViewMode] = useState('pdf'); // 'pdf' | 'preview' | 'edit'
   const [resumeEditText, setResumeEditText] = useState('');
+  const [resumePdfUrl, setResumePdfUrl] = useState('');
+  const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [isSavingResumeText, setIsSavingResumeText] = useState(false);
   const [isSyncingBucket, setIsSyncingBucket] = useState(false);
 
@@ -323,12 +326,33 @@ export default function AppWeb() {
     }
   }, [settings?.resumeContent]);
 
+  // Load PDF signed URL whenever session or resumeName changes
+  const loadResumePdfUrl = async (customName = '') => {
+    if (!session?.user?.id) return;
+    setIsLoadingPdf(true);
+    try {
+      const info = await getResumeFileUrl(session.user.id, customName || settings.resumeName);
+      if (info && info.url) {
+        setResumePdfUrl(info.url);
+      }
+    } catch (_e) {
+    } finally {
+      setIsLoadingPdf(false);
+    }
+  };
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      loadResumePdfUrl(settings.resumeName);
+    }
+  }, [session?.user?.id, settings.resumeName, activeTab]);
+
   // Auto-sync resume from storage bucket if user has no resume text loaded
   useEffect(() => {
-    if (activeTab === 'resume' && session?.user?.id && !settings?.resumeContent && !isSyncingBucket) {
+    if (activeTab === 'resume' && session?.user?.id && (!settings?.resumeContent || !resumePdfUrl) && !isSyncingBucket) {
       handleSyncResumeFromBucket();
     }
-  }, [activeTab, session?.user?.id, settings?.resumeContent]);
+  }, [activeTab, session?.user?.id]);
 
   const clearApplicationForm = () => {
     setJobTitle('');
@@ -844,7 +868,7 @@ export default function AppWeb() {
     setIsSyncingBucket(true);
     try {
       const res = await syncResumeFromBucket(session.user.id);
-      if (res && res.resumeContent) {
+      if (res && (res.resumeContent || res.signed_url)) {
         const updated = {
           ...settings,
           resumeName: res.resumeName,
@@ -852,7 +876,15 @@ export default function AppWeb() {
         };
         setSettings(updated);
         setResumeEditText(res.resumeContent);
-        showSuccess(`Loaded "${res.resumeName}" (${res.resumeContent.length} chars) from your cloud bucket!`, 'Resume Loaded');
+        if (res.signed_url) {
+          setResumePdfUrl(res.signed_url);
+        } else {
+          loadResumePdfUrl(res.resumeName);
+        }
+        if (res.is_pdf || (res.resumeName && res.resumeName.toLowerCase().endsWith('.pdf'))) {
+          setResumeViewMode('pdf');
+        }
+        showSuccess(`Loaded "${res.resumeName}" directly from your cloud storage bucket!`, 'Resume Loaded');
       } else {
         showError('No resume file found in your cloud storage bucket. Please upload a resume first.', 'Bucket Empty');
       }
@@ -2469,6 +2501,26 @@ export default function AppWeb() {
                         paddingVertical: 6,
                         paddingHorizontal: 12,
                         borderRadius: 6,
+                        backgroundColor: resumeViewMode === 'pdf' ? '#ffffff' : 'transparent',
+                        shadowColor: resumeViewMode === 'pdf' ? '#000' : 'transparent',
+                        shadowOpacity: resumeViewMode === 'pdf' ? 0.08 : 0,
+                        shadowRadius: 4,
+                      }}
+                      onPress={() => {
+                        setResumeViewMode('pdf');
+                        if (!resumePdfUrl) loadResumePdfUrl();
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'pdf' ? '#0f172a' : '#64748b' }}>
+                        📄 PDF Viewer
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 6,
+                        paddingHorizontal: 12,
+                        borderRadius: 6,
                         backgroundColor: resumeViewMode === 'preview' ? '#ffffff' : 'transparent',
                         shadowColor: resumeViewMode === 'preview' ? '#000' : 'transparent',
                         shadowOpacity: resumeViewMode === 'preview' ? 0.08 : 0,
@@ -2477,7 +2529,7 @@ export default function AppWeb() {
                       onPress={() => setResumeViewMode('preview')}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'preview' ? '#0f172a' : '#64748b' }}>
-                        👁️ Formatted View
+                        👁️ Text / ATS View
                       </Text>
                     </TouchableOpacity>
 
@@ -2598,8 +2650,119 @@ export default function AppWeb() {
                 </View>
               )}
 
-              {/* Resume Content Body: Preview or Edit */}
-              {resumeViewMode === 'edit' ? (
+              {/* Resume Content Body: PDF Viewer, Text Preview, or Editor */}
+              {resumeViewMode === 'pdf' ? (
+                <View style={{ gap: 12 }}>
+                  {/* PDF Toolbar */}
+                  <View style={{ flexDirection: isCompact ? 'column' : 'row', justifyContent: 'space-between', alignItems: isCompact ? 'flex-start' : 'center', backgroundColor: '#f8fafc', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#0f172a' }}>
+                        📄 {settings.resumeName || 'Resume.pdf'}
+                      </Text>
+                      <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#b91c1c' }}>PDF DOCUMENT</Text>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {resumePdfUrl ? (
+                        <a
+                          href={resumePdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '6px 12px',
+                            backgroundColor: '#eff6ff',
+                            border: '1px solid #bfdbfe',
+                            borderRadius: '6px',
+                            color: '#1d4ed8',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            textDecoration: 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ↗ Open in New Window
+                        </a>
+                      ) : null}
+
+                      {resumePdfUrl ? (
+                        <a
+                          href={resumePdfUrl}
+                          download={settings.resumeName || 'Resume.pdf'}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '6px 12px',
+                            backgroundColor: '#f1f5f9',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '6px',
+                            color: '#334155',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            textDecoration: 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ⬇ Download PDF
+                        </a>
+                      ) : null}
+
+                      <TouchableOpacity
+                        style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#f1f5f9', borderRadius: 6, borderWidth: 1, borderColor: '#e2e8f0' }}
+                        onPress={() => loadResumePdfUrl()}
+                      >
+                        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600' }}>🔄 Reload</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* High-Fidelity Embedded PDF Viewer */}
+                  {resumePdfUrl ? (
+                    <div style={{ width: '100%', height: '820px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', backgroundColor: '#525659' }}>
+                      <iframe
+                        src={`${resumePdfUrl}#toolbar=1&navpanes=1`}
+                        title={settings.resumeName || 'Resume PDF Document'}
+                        width="100%"
+                        height="100%"
+                        style={{ border: 'none', display: 'block' }}
+                      />
+                    </div>
+                  ) : (
+                    <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                      {isLoadingPdf ? (
+                        <View style={{ alignItems: 'center' }}>
+                          <ActivityIndicator size="large" color="#2563eb" style={{ marginBottom: 12 }} />
+                          <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b', marginBottom: 4 }}>
+                            Generating Secure PDF Link...
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748b' }}>
+                            Accessing your resume from Supabase Storage bucket
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={{ alignItems: 'center' }}>
+                          <Text style={{ fontSize: 40, marginBottom: 10 }}>📄</Text>
+                          <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
+                            No PDF Document URL Available
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', maxWidth: 380, marginBottom: 16 }}>
+                            Sync with your cloud storage bucket to load and view your exact PDF resume.
+                          </Text>
+                          <TouchableOpacity
+                            style={[styles.resumeActionButton, { backgroundColor: '#0284c7', paddingHorizontal: 20 }]}
+                            onPress={handleSyncResumeFromBucket}
+                          >
+                            <Text style={styles.resumeActionButtonText}>📥 Load Resume from Bucket</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              ) : resumeViewMode === 'edit' ? (
                 <View style={{ gap: 12 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>
@@ -2635,7 +2798,7 @@ export default function AppWeb() {
                       style={[styles.resumeActionButton, { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1' }]}
                       onPress={() => {
                         setResumeEditText(settings.resumeContent || '');
-                        setResumeViewMode('preview');
+                        setResumeViewMode(resumePdfUrl ? 'pdf' : 'preview');
                       }}
                     >
                       <Text style={{ color: '#475569', fontWeight: '600', fontSize: 13 }}>Cancel</Text>

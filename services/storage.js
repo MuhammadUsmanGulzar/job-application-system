@@ -370,6 +370,61 @@ export async function syncResumeFromBucket(userId) {
   return null;
 }
 
+// Generates a signed URL to display the exact PDF / document file in the viewer
+export async function getResumeFileUrl(userId, fileName = '') {
+  if (!userId) return null;
+
+  // 1. Try Python Agent endpoint (uses service role key, highly reliable)
+  try {
+    const resp = await fetch('http://localhost:8000/api/agent/get-resume-file-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, file_name: fileName || '' }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.success && data.signed_url) {
+        return {
+          url: data.signed_url,
+          fileName: data.file_name,
+          isPdf: !!data.is_pdf,
+        };
+      }
+    }
+  } catch (_e) {}
+
+  // 2. Direct Supabase Storage signed URL (client fallback)
+  try {
+    let targetFileName = fileName;
+    if (!targetFileName) {
+      const { data: files } = await supabase.storage.from('resumes').list(userId);
+      if (files && files.length > 0) {
+        const real = files.filter(f => f.name && !f.name.endsWith('/'));
+        if (real.length > 0) {
+          real.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+          targetFileName = real[0].name;
+        }
+      }
+    }
+
+    if (targetFileName) {
+      const filePath = `${userId}/${targetFileName}`;
+      const { data, error } = await supabase.storage.from('resumes').createSignedUrl(filePath, 7200);
+      if (!error && data?.signedUrl) {
+        return {
+          url: data.signedUrl,
+          fileName: targetFileName,
+          isPdf: targetFileName.toLowerCase().endsWith('.pdf'),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Direct signed URL error:', err);
+  }
+
+  return null;
+}
+
 // --------------------------------------------------------
 // RESUME VIEWER & AI RESUME TAILOR AGENT
 // --------------------------------------------------------
@@ -384,9 +439,13 @@ export async function fetchUserResume(userId) {
         .maybeSingle();
 
       if (!error && data && data.resume_content) {
+        const fileInfo = await getResumeFileUrl(userId, data.resume_name).catch(() => null);
+        const rName = data.resume_name || 'Resume.pdf';
         return {
-          resumeName: data.resume_name || 'Resume.txt',
+          resumeName: rName,
           resumeContent: data.resume_content,
+          resumeUrl: fileInfo?.url || '',
+          isPdf: rName.toLowerCase().endsWith('.pdf'),
         };
       }
     } catch (_e) {}
@@ -395,7 +454,14 @@ export async function fetchUserResume(userId) {
     try {
       const bucketResult = await syncResumeFromBucket(userId);
       if (bucketResult && bucketResult.resumeContent) {
-        return bucketResult;
+        const fileInfo = await getResumeFileUrl(userId, bucketResult.resumeName).catch(() => null);
+        const rName = bucketResult.resumeName || 'Resume.pdf';
+        return {
+          ...bucketResult,
+          resumeName: rName,
+          resumeUrl: fileInfo?.url || bucketResult.signed_url || '',
+          isPdf: rName.toLowerCase().endsWith('.pdf'),
+        };
       }
     } catch (_bErr) {}
   }
@@ -408,8 +474,10 @@ export async function fetchUserResume(userId) {
       const parsed = JSON.parse(cached);
       if (parsed.resumeContent) {
         return {
-          resumeName: parsed.resumeName || 'Resume.txt',
+          resumeName: parsed.resumeName || 'Resume.pdf',
           resumeContent: parsed.resumeContent,
+          resumeUrl: parsed.resumeUrl || '',
+          isPdf: (parsed.resumeName || '').toLowerCase().endsWith('.pdf'),
         };
       }
     }
@@ -418,6 +486,8 @@ export async function fetchUserResume(userId) {
   return {
     resumeName: '',
     resumeContent: '',
+    resumeUrl: '',
+    isPdf: false,
   };
 }
 
