@@ -1,3 +1,5 @@
+import { enforceResumeFidelity } from './resumeFidelity.js';
+
 /**
  * AI Service Configuration & Direct LLM Integration
  * 
@@ -294,18 +296,14 @@ Your mission is to tailor and optimize the candidate's resume for the target job
 CRITICAL FORMATTING RULES:
 1. OUTPUT CLEAN, PROFESSIONAL PLAIN TEXT ONLY.
 2. DO NOT USE ASCII BORDER BOXES, ASCII LINES, OR CHARACTERS LIKE "═════", "-----", or "=====". Real ATS parsers (Workday, Greenhouse, Taleo) break on them!
-3. Start with the candidate's real name, target headline, and one compact contact line. Never print labels such as "CANDIDATE CONTACT HEADER" or empty LinkedIn/GitHub/Portfolio placeholders.
-4. Use standard uppercase section headings:
-   - PROFESSIONAL SUMMARY
-   - CORE COMPETENCIES & TECHNICAL SKILLS
-   - PROFESSIONAL EXPERIENCE
-   - PROJECTS & TECHNICAL HIGHLIGHTS (if applicable)
-   - EDUCATION & CREDENTIALS
-5. Retain all factual work experience, real employer names, degrees, dates, links, and metrics.
-6. Never invent a skill, tool, metric, employer, project, credential, or result. Missing job skills remain gaps unless the original resume proves them.
-7. Upgrade the Professional Summary to clearly position the candidate for the target role ("${jobTitle} at ${companyName || 'the target company'}").
-8. In CORE COMPETENCIES, organize only verified skills into categorized bullet points.
-9. Improve experience bullets with strong action verbs while preserving their exact factual meaning and existing metrics.
+3. Copy the complete header/personal-information block EXACTLY from the source: name, existing professional headline, address/location, phone, email, LinkedIn, GitHub, portfolio, and every visible URL.
+4. Preserve every original section heading, in the same wording and order.
+5. Copy EDUCATION, certifications, projects, job titles, employer names, employment dates, and locations verbatim.
+6. You may change ONLY: the professional-summary wording, technical-skill ordering/emphasis, and experience bullet wording. Keep the same bullets assigned to the same jobs, and preserve every number and factual claim.
+7. Never invent a skill, tool, metric, employer, project, credential, result, or hyperlink. Missing job skills remain gaps unless the original resume proves them.
+8. Tailor the Professional Summary toward "${jobTitle} at ${companyName || 'the target company'}" without changing the candidate's professional headline.
+9. In the existing skills section, organize only verified skills and prioritize job-relevant ones.
+10. Improve experience bullets with strong action verbs only when the revised wording preserves the exact factual meaning and existing metrics.
 
 Your response MUST be strict valid JSON with no markdown wrapping:
 {
@@ -359,7 +357,7 @@ ${rawResume}`;
   }
 
   const parsed = JSON.parse(cleanJson);
-  const tailoredResume = (parsed.tailoredResume || '').trim();
+  const tailoredResume = enforceResumeFidelity(rawResume, (parsed.tailoredResume || '').trim());
 
   if (!tailoredResume) {
     throw new Error('AI resume optimization returned an empty resume.');
@@ -545,4 +543,3 @@ ATS Matched Competencies: ${(atsReport?.matchedSkills || []).join(', ') || 'Rele
     source: `llm-${(provider || 'ai').toLowerCase()}`,
   };
 }
-

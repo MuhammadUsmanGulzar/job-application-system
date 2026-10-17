@@ -85,9 +85,11 @@ def extract_resume_from_bucket(user_id: str, supabase_client: Optional[Client] =
         if not real_files:
             return "", ""
         
-        # Sort descending by updated_at or created_at
-        real_files.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
-        chosen_file = real_files[0]
+        # Prefer the user's uploaded master resume over generated job-specific copies.
+        source_files = [f for f in real_files if not re.match(r"resume[_-]?tailored", f.get("name", ""), re.I)]
+        candidates = source_files or real_files
+        candidates.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
+        chosen_file = candidates[0]
         file_name = chosen_file["name"]
         file_path = f"{user_id}/{file_name}"
 
@@ -214,6 +216,7 @@ def load_user_resume_node(state: ResumeTailorState) -> ResumeTailorState:
                 supabase.from_("resumes")
                 .select("file_name, parsed_text")
                 .eq("user_id", user_id)
+                .eq("is_primary", True)
                 .order("created_at", desc=True)
                 .limit(1)
                 .execute()
@@ -302,6 +305,110 @@ def analyze_requirements_node(state: ResumeTailorState) -> ResumeTailorState:
     }
 
 
+_SECTION_PATTERNS = [
+    ("summary", re.compile(r"^(professional\s+summary|summary|profile|about(?:\s+me)?)$", re.I)),
+    ("skills", re.compile(r"^(core\s+competencies(?:\s*&\s*technical\s+skills)?|technical\s+skills|skills|key\s+skills|competencies)$", re.I)),
+    ("experience", re.compile(r"^(professional\s+experience|work\s+experience|experience|employment\s+history|work\s+history)$", re.I)),
+    ("projects", re.compile(r"^(selected\s+.*projects|projects(?:\s*&\s*technical\s+highlights)?|key\s+projects)$", re.I)),
+    ("education", re.compile(r"^(education(?:\s*&\s*credentials)?|academic\s+background|qualifications)$", re.I)),
+    ("certifications", re.compile(r"^(certifications?|licenses?\s*&\s*certifications?)$", re.I)),
+    ("achievements", re.compile(r"^(achievements?|awards?)$", re.I)),
+]
+
+
+def _section_kind(line: str) -> str:
+    clean = (line or "").strip().rstrip(":")
+    for kind, pattern in _SECTION_PATTERNS:
+        if pattern.fullmatch(clean):
+            return kind
+    return ""
+
+
+def _parse_resume_structure(text: str) -> tuple[List[str], List[Dict[str, Any]]]:
+    header: List[str] = []
+    sections: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        kind = _section_kind(line)
+        if not kind and current is not None and re.fullmatch(r"[A-Z][A-Z\s&/+\-]{2,60}", line or ""):
+            kind = f"other:{line.lower()}"
+        if kind:
+            current = {"kind": kind, "heading": line, "body": []}
+            sections.append(current)
+        elif current is not None:
+            if line or current["body"]:
+                current["body"].append(line)
+        elif line:
+            header.append(line)
+    return header, sections
+
+
+def _is_bullet(line: str) -> bool:
+    return bool(re.match(r"^[-•*]\s*", (line or "").strip()))
+
+
+def _safe_experience_bullet(original: str, revised: str) -> str:
+    if not revised:
+        return original
+    clean = re.sub(r"^[-•*]\s*", "", revised).strip()
+    original_clean = re.sub(r"^[-•*]\s*", "", original).strip()
+    if not clean or len(clean) > max(int(len(original_clean) * 1.65), len(original_clean) + 80):
+        return original
+    original_numbers = re.findall(r"\b\d[\d,.]*%?\b", original_clean)
+    revised_numbers = re.findall(r"\b\d[\d,.]*%?\b", clean)
+    if any(value not in original_numbers for value in revised_numbers):
+        return original
+    prefix_match = re.match(r"^[-•*]", original.strip())
+    return f"{prefix_match.group(0) if prefix_match else '-'} {clean}"
+
+
+def enforce_resume_fidelity(source_resume: str, ai_draft: str) -> str:
+    """Restore immutable facts and allow edits only to summary, skills, and experience bullets."""
+    source_header, source_sections = _parse_resume_structure(source_resume)
+    _, draft_sections = _parse_resume_structure(ai_draft)
+    if not source_header or not source_sections:
+        return (source_resume or ai_draft).strip()
+    draft_by_kind = {section["kind"]: section for section in draft_sections}
+    output = [*source_header, ""]
+    for index, section in enumerate(source_sections):
+        candidate = draft_by_kind.get(section["kind"])
+        body = list(section["body"])
+        if section["kind"] in ("summary", "skills") and candidate and any(candidate["body"]):
+            body = list(candidate["body"])
+        elif section["kind"] == "experience" and candidate:
+            candidate_bullets = [line for line in candidate["body"] if _is_bullet(line)]
+            bullet_index = 0
+            merged = []
+            for line in body:
+                if _is_bullet(line):
+                    revised = candidate_bullets[bullet_index] if bullet_index < len(candidate_bullets) else ""
+                    merged.append(_safe_experience_bullet(line, revised))
+                    bullet_index += 1
+                else:
+                    merged.append(line)
+            body = merged
+        output.extend([section["heading"], *body])
+        if index < len(source_sections) - 1:
+            output.append("")
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip()
+
+
+def _filter_contact_to_source(source_resume: str, contact: Dict[str, str]) -> Dict[str, str]:
+    header, _ = _parse_resume_structure(source_resume)
+    head = " | ".join(header)
+    filtered = {"full_name": header[0] if header else ""}
+    labels = {"linkedin": r"linkedin", "github": r"github", "portfolio": r"portfolio|website"}
+    for key in ("email", "phone", "location"):
+        value = (contact.get(key) or "").strip()
+        filtered[key] = value if value and value.lower() in head.lower() else ""
+    for key, label in labels.items():
+        value = (contact.get(key) or "").strip()
+        mentioned = value and (value.lower() in head.lower() or re.search(rf"\b(?:{label})\b", head, re.I))
+        filtered[key] = value if mentioned else ""
+    return filtered
+
+
 def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
     """
     Node 3: Intelligently tailors the user's resume for the target job:
@@ -354,16 +461,12 @@ Original Resume:
 
 CRITICAL RULES:
 1. Do NOT use ASCII decorative borders or horizontal lines (e.g. NEVER output lines of '═════' or '-----').
-2. Start with the candidate's real name, target headline, and a compact contact line. Never print bracketed placeholders or labels such as "CANDIDATE CONTACT HEADER".
-3. Use standard uppercase section titles:
-   PROFESSIONAL SUMMARY
-   CORE COMPETENCIES & TECHNICAL SKILLS
-   PROFESSIONAL EXPERIENCE
-   PROJECTS (if present)
-   EDUCATION
-4. Begin experience bullets with strong action verbs only when doing so preserves the original factual meaning.
-5. Emphasize verified skills only. Never fabricate skills, metrics, employers, projects, universities, or credentials.
-6. Return ONLY a valid JSON object matching this schema:
+2. Copy the complete header/personal-information block EXACTLY from the source: name, existing professional headline, address/location, phone, email, LinkedIn, GitHub, portfolio, and every visible URL.
+3. Preserve every original section heading, in the same wording and order.
+4. Copy EDUCATION, certifications, projects, job titles, employer names, employment dates, and locations verbatim.
+5. You may change ONLY: the professional-summary wording, technical-skill ordering/emphasis, and experience bullet wording. Keep the same experience bullets in the same job, and preserve every number and factual claim.
+6. Emphasize verified skills only. Never fabricate skills, metrics, employers, projects, universities, credentials, or hyperlinks.
+7. Return ONLY a valid JSON object matching this schema:
 {{
   "tailoredResume": "Complete optimized plain text resume",
   "matchedSkills": ["Skill 1", "Skill 2"],
@@ -382,7 +485,7 @@ CRITICAL RULES:
             )
             parsed = parse_json_from_llm_response(raw_json)
             if parsed.get("tailoredResume") and len(parsed["tailoredResume"]) > 200:
-                cleaned_resume = parsed["tailoredResume"].replace("═", "").strip()
+                cleaned_resume = enforce_resume_fidelity(raw, parsed["tailoredResume"].replace("═", "").strip())
                 logs.append(f"Successfully optimized resume via user's LLM ({state.get('llm_provider', 'OpenAI')})")
                 return {
                     **state,
@@ -506,7 +609,7 @@ CRITICAL RULES:
         body_lines = [line.strip() for line in lines[1:] if line.strip() and line.strip() != contact_info]
 
     tailored_blocks.extend(body_lines)
-    full_tailored_resume = "\n".join(tailored_blocks).strip()
+    full_tailored_resume = enforce_resume_fidelity(raw, "\n".join(tailored_blocks).strip())
 
     logs.append("Successfully generated tailored resume with targeted keywords.")
 
@@ -687,28 +790,18 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
 
         logs.append(f"Persisting tailored resume '{file_name}' to Supabase for user {user_id}...")
 
-        # 1. Update user_settings table
-        supabase.from_("user_settings").upsert({
-            "user_id": user_id,
-            "resume_name": file_name,
-            "resume_content": tailored,
-            "updated_at": "now()",
-        }, on_conflict="user_id").execute()
-
-        logs.append("Updated active resume in user_settings table.")
-
-        # 2. Insert into public.resumes table
-        supabase.from_("resumes").insert({
+        # Keep the uploaded master resume untouched; record this as a job-specific version.
+        supabase.from_("resumes").upsert({
             "user_id": user_id,
             "file_name": file_name,
             "file_path": f"{user_id}/{file_name}",
             "parsed_text": tailored,
-            "is_primary": True,
-        }).execute()
+            "is_primary": False,
+        }, on_conflict="user_id,file_path").execute()
 
-        logs.append("Recorded tailored resume into public.resumes table.")
+        logs.append("Recorded tailored resume as a non-primary job-specific version.")
 
-        # 3. Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}' as PDF
+        # Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}' as PDF
         try:
             try:
                 contact = {}
@@ -722,6 +815,7 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
                 for key in ("full_name", "email", "phone", "location", "linkedin", "github", "portfolio"):
                     if state.get(key):
                         contact[key] = state.get(key)
+                contact = _filter_contact_to_source(state.get("raw_resume") or tailored, contact)
                 pdf_payload = generate_pdf_bytes_from_text(tailored, contact)
                 content_type = "application/pdf"
             except Exception as pdf_gen_err:

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { generatePdfFromResumeText } from './pdfGeneratorPro.js';
 import { supabase } from '../supabase';
 import { performLlmResumeOptimization } from './ai.js';
+import { enforceResumeFidelity, filterProfileToSourceResume } from './resumeFidelity.js';
 
 const SETTINGS_KEY = '@job_system_settings';
 const APPLICATIONS_KEY = '@job_system_applications';
@@ -250,7 +251,7 @@ export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, d
   try {
     let uploadPayload;
     try {
-      const pdfBytes = await generatePdfFromResumeText(tailoredResumeText, profile);
+      const pdfBytes = await generatePdfFromResumeText(tailoredResumeText, filterProfileToSourceResume(tailoredResumeText, profile));
       if (typeof Blob !== 'undefined') {
         uploadPayload = new Blob([pdfBytes], { type: 'application/pdf' });
       } else {
@@ -286,40 +287,16 @@ export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, d
 
     // Record into public.resumes table
     try {
-      await supabase.from('resumes').insert({
+      await supabase.from('resumes').upsert({
         user_id: userId,
         file_name: fileName,
         file_path: filePath,
         parsed_text: tailoredResumeText,
-        is_primary: true,
-      });
+        is_primary: false,
+      }, { onConflict: 'user_id,file_path' });
     } catch (_dbErr) {
       console.warn('Insert to public.resumes note:', _dbErr.message);
     }
-
-    // Sync to user_settings table
-    try {
-      await supabase
-        .from('user_settings')
-        .upsert({
-          user_id: userId,
-          resume_name: fileName,
-          resume_content: tailoredResumeText,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' });
-    } catch (_sErr) {}
-
-    // Also update local AsyncStorage cache
-    try {
-      const key = `${SETTINGS_KEY}_${userId}`;
-      const currentStr = await AsyncStorage.getItem(key);
-      const current = currentStr ? JSON.parse(currentStr) : {};
-      await AsyncStorage.setItem(key, JSON.stringify({
-        ...current,
-        resumeName: fileName,
-        resumeContent: tailoredResumeText,
-      }));
-    } catch (_cErr) {}
 
     return {
       success: true,
@@ -814,7 +791,10 @@ export async function tailorResumeForJob({
     preservedSections.join('\n'),
   ];
 
-  const tailoredResume = resumeBlocks.filter((b, i) => !(b === '' && resumeBlocks[i - 1] === '')).join('\n').trim();
+  const tailoredResume = enforceResumeFidelity(
+    baseResume,
+    resumeBlocks.filter((b, i) => !(b === '' && resumeBlocks[i - 1] === '')).join('\n').trim()
+  );
 
   // Persist tailored resume to Supabase Storage bucket and DB
   let bucketInfo = null;
