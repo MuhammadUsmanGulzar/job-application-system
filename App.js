@@ -33,7 +33,10 @@ import {
   updateFullApplication,
   htmlToPlainText,
   subscribeToApplications,
-  mapApplicationRow
+  mapApplicationRow,
+  fetchUserResume,
+  updateResumeContent,
+  tailorResumeForJob
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
@@ -299,6 +302,19 @@ export default function App() {
   const [generatedResult, setGeneratedResult] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const pollIntervalRef = useRef(null);
+
+  // Resume Viewer & AI Tailor Agent State
+  const [isTailoringResume, setIsTailoringResume] = useState(false);
+  const [resumeTailorResult, setResumeTailorResult] = useState(null);
+  const [resumeViewMode, setResumeViewMode] = useState('preview'); // 'preview' | 'edit'
+  const [resumeEditText, setResumeEditText] = useState('');
+  const [isSavingResumeText, setIsSavingResumeText] = useState(false);
+
+  useEffect(() => {
+    if (settings?.resumeContent) {
+      setResumeEditText(settings.resumeContent);
+    }
+  }, [settings?.resumeContent]);
 
   const clearApplicationForm = () => {
     setJobTitle('');
@@ -646,6 +662,104 @@ export default function App() {
       }
     } catch (e) {
       showError(e.message, 'File Picker Error');
+    }
+  };
+
+  // AI Resume Tailor Action: Tailors resume based on job title, company & requirements
+  const handleTailorResumeForCurrentJob = async () => {
+    if (isTailoringResume) return;
+    const targetTitle = (jobTitle || 'Software Engineer').trim();
+    const targetCompany = (companyName || '').trim();
+    const targetReqs = (requirements || '').trim();
+    const targetDesc = (description || '').trim();
+
+    if (!targetReqs && !targetDesc && !targetTitle) {
+      showError('Please enter a Job Title or paste job requirements first to tailor your resume.', 'Input Needed');
+      return;
+    }
+
+    setIsTailoringResume(true);
+    try {
+      const result = await tailorResumeForJob({
+        userId: session?.user?.id,
+        jobTitle: targetTitle,
+        companyName: targetCompany,
+        requirements: targetReqs,
+        description: targetDesc,
+        rawResume: settings.resumeContent || '',
+        resumeName: settings.resumeName || 'Resume.txt',
+      });
+
+      if (result.success && result.tailoredResume) {
+        const updated = {
+          ...settings,
+          resumeName: result.resumeName,
+          resumeContent: result.tailoredResume,
+        };
+        setSettings(updated);
+        setResumeEditText(result.tailoredResume);
+        setResumeTailorResult(result);
+        showSuccess(
+          `Resume successfully tailored for ${targetTitle} at ${targetCompany || 'target company'}! Highlighted ${result.matchedSkills?.length || 0} key skills.`,
+          'Resume Tailored!'
+        );
+      } else {
+        showError('Could not tailor resume. Please check your inputs.', 'Notice');
+      }
+    } catch (err) {
+      showError('Error tailoring resume: ' + err.message, 'Tailor Error');
+    } finally {
+      setIsTailoringResume(false);
+    }
+  };
+
+  const handleSaveResumeEdits = async () => {
+    if (isSavingResumeText) return;
+    setIsSavingResumeText(true);
+    try {
+      const updated = await updateResumeContent(session?.user?.id, resumeEditText, settings.resumeName);
+      setSettings(updated);
+      setResumeViewMode('preview');
+      showSuccess('Resume updated and saved to your profile!', 'Saved');
+    } catch (err) {
+      showError('Failed to save resume: ' + err.message, 'Save Error');
+    } finally {
+      setIsSavingResumeText(false);
+    }
+  };
+
+  const handleCopyText = (text) => {
+    if (!text) {
+      showError('No content to copy.', 'Notice');
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      showSuccess('Copied to clipboard!', 'Copied');
+    } else {
+      showSuccess('Resume ready to use.', 'Notice');
+    }
+  };
+
+  const handleDownloadResume = () => {
+    const content = settings.resumeContent || resumeEditText;
+    if (!content) {
+      showError('No resume content to download. Please upload or create one first.', 'Notice');
+      return;
+    }
+    if (typeof document !== 'undefined') {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = settings.resumeName || 'Resume.txt';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showSuccess('Resume downloaded successfully!', 'Downloaded');
+    } else {
+      handleCopyText(content);
     }
   };
 
@@ -1349,6 +1463,15 @@ export default function App() {
         </TouchableOpacity>
 
         <TouchableOpacity 
+          style={[styles.tabItem, activeTab === 'resume' && styles.tabItemActive]}
+          onPress={() => setActiveTab('resume')}
+        >
+          <Text style={[styles.tabText, activeTab === 'resume' && styles.tabTextActive]}>
+            Resume {settings.resumeContent ? '✓' : ''}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
           style={[styles.tabItem, activeTab === 'settings' && styles.tabItemActive]}
           onPress={() => setActiveTab('settings')}
         >
@@ -1474,6 +1597,39 @@ export default function App() {
                 onChangeText={setDescription}
                 multiline
               />
+
+              {/* Quick Resume Status & AI Tailor Box */}
+              <View style={styles.resumeBox}>
+                <View style={{ flex: 1, marginBottom: 8 }}>
+                  <Text style={styles.resumeBoxTitle}>
+                    📄 Resume: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{settings.resumeName || 'Primary Resume'}</Text>
+                  </Text>
+                  <Text style={styles.resumeBoxSubtitle}>
+                    {settings.resumeContent ? `${settings.resumeContent.length} chars • Ready to submit or tailor` : 'No resume uploaded yet'}
+                  </Text>
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <TouchableOpacity
+                    style={styles.resumeViewBtn}
+                    onPress={() => setActiveTab('resume')}
+                  >
+                    <Text style={styles.resumeViewBtnText}>👁️ View Resume</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.resumeTailorBtn, isTailoringResume && styles.disabledButton]}
+                    onPress={handleTailorResumeForCurrentJob}
+                    disabled={isTailoringResume}
+                  >
+                    {isTailoringResume ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.resumeTailorBtnText}>✨ Tailor for this Job</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
 
               <TouchableOpacity 
                 style={[styles.primaryBtn, isGenerating && { backgroundColor: '#1d4ed8' }]}
@@ -1950,6 +2106,250 @@ export default function App() {
                   <Text style={styles.primaryBtnText}>Save Gmail settings</Text>
                 )}
               </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* ================= TAB 4: RESUME VIEWER & AI TAILOR ================= */}
+        {activeTab === 'resume' && (
+          <View>
+            <View style={styles.card}>
+              {/* Resume Card Header */}
+              <View style={{ borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 12, marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                  <Text style={styles.cardTitle}>Your Resume</Text>
+                  <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#1e40af' }}>
+                      {settings.resumeName || 'Primary Resume'}
+                    </Text>
+                  </View>
+                  {settings.resumeContent ? (
+                    <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>✓ Synced</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.subText}>
+                  Review, edit, and optimize your resume. Our AI agent tailors your resume keywords and summary to match job postings.
+                </Text>
+              </View>
+
+              {/* Action Controls */}
+              <View style={{ gap: 10, marginBottom: 16 }}>
+                {/* Mode Switcher */}
+                <View style={{ flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 8, padding: 3 }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      paddingVertical: 8,
+                      alignItems: 'center',
+                      borderRadius: 6,
+                      backgroundColor: resumeViewMode === 'preview' ? '#ffffff' : 'transparent',
+                    }}
+                    onPress={() => setResumeViewMode('preview')}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'preview' ? '#0f172a' : '#64748b' }}>
+                      👁️ Formatted View
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      paddingVertical: 8,
+                      alignItems: 'center',
+                      borderRadius: 6,
+                      backgroundColor: resumeViewMode === 'edit' ? '#ffffff' : 'transparent',
+                    }}
+                    onPress={() => {
+                      setResumeEditText(settings.resumeContent || '');
+                      setResumeViewMode('edit');
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'edit' ? '#0f172a' : '#64748b' }}>
+                      ✏️ Edit Content
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Quick Action Buttons */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.resumeActionButton, { backgroundColor: '#10b981', flex: 1, minWidth: 140 }]}
+                    onPress={handleTailorResumeForCurrentJob}
+                    disabled={isTailoringResume}
+                  >
+                    {isTailoringResume ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.resumeActionButtonText}>✨ Tailor for {jobTitle ? `"${jobTitle}"` : 'Job'}</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.resumeActionButton, { backgroundColor: '#0f172a' }]}
+                    onPress={() => {
+                      const textToCopy = settings.resumeContent || resumeEditText;
+                      if (textToCopy) handleCopyText(textToCopy);
+                      else showError('No resume content to copy.', 'Notice');
+                    }}
+                  >
+                    <Text style={styles.resumeActionButtonText}>📋 Copy Text</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.resumeActionButton, { backgroundColor: '#475569' }]}
+                    onPress={handleDownloadResume}
+                  >
+                    <Text style={styles.resumeActionButtonText}>⬇️ Download</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
+                    onPress={pickDocument}
+                  >
+                    <Text style={styles.resumeActionButtonText}>📤 Pick File</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* AI Tailoring Result Insights Banner */}
+              {resumeTailorResult && (
+                <View style={{ backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac', borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#166534' }}>
+                      🎯 Resume Tailored by AI Agent
+                    </Text>
+                    <View style={{ backgroundColor: '#bbf7d0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#14532d' }}>
+                        Source: {resumeTailorResult.source === 'python-agent' ? 'LangGraph Agent' : 'Smart Tailor Engine'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {resumeTailorResult.matchedSkills && resumeTailorResult.matchedSkills.length > 0 && (
+                    <View style={{ marginBottom: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#15803d', marginBottom: 4 }}>
+                        Matched Job Requirements & Skills:
+                      </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                        {resumeTailorResult.matchedSkills.map((sk, idx) => (
+                          <View key={idx} style={{ backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#86efac', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '600', color: '#166534' }}>✓ {sk}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  )}
+
+                  {resumeTailorResult.enhancements && (
+                    <View>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#15803d', marginBottom: 2 }}>
+                        Optimizations Applied:
+                      </Text>
+                      {resumeTailorResult.enhancements.map((enh, idx) => (
+                        <Text key={idx} style={{ fontSize: 11, color: '#166534', lineHeight: 16 }}>
+                          • {enh}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Resume Content Body: Preview or Edit */}
+              {resumeViewMode === 'edit' ? (
+                <View style={{ gap: 10 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>
+                      Edit Resume Content:
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#64748b' }}>
+                      {resumeEditText.length} characters
+                    </Text>
+                  </View>
+
+                  <TextInput
+                    style={[
+                      styles.input,
+                      {
+                        minHeight: 380,
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        lineHeight: 18,
+                        padding: 12,
+                        backgroundColor: '#f8fafc',
+                        textAlignVertical: 'top',
+                      },
+                    ]}
+                    value={resumeEditText}
+                    onChangeText={setResumeEditText}
+                    multiline
+                    placeholder="Paste or write your full resume here..."
+                    placeholderTextColor="#94a3b8"
+                  />
+
+                  <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                    <TouchableOpacity
+                      style={[styles.resumeActionButton, { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1' }]}
+                      onPress={() => {
+                        setResumeEditText(settings.resumeContent || '');
+                        setResumeViewMode('preview');
+                      }}
+                    >
+                      <Text style={{ color: '#475569', fontWeight: '600', fontSize: 12 }}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.resumeActionButton, { backgroundColor: '#10b981', paddingHorizontal: 18 }]}
+                      onPress={handleSaveResumeEdits}
+                      disabled={isSavingResumeText}
+                    >
+                      {isSavingResumeText ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text style={styles.resumeActionButtonText}>💾 Save Changes</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                /* Formatted Clean Document View */
+                <View style={styles.resumePaper}>
+                  {settings.resumeContent ? (
+                    <ScrollView style={{ maxHeight: 520 }} nestedScrollEnabled>
+                      <Text style={styles.resumePaperText}>
+                        {settings.resumeContent}
+                      </Text>
+                    </ScrollView>
+                  ) : (
+                    <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: 36, marginBottom: 8 }}>📄</Text>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b', marginBottom: 4 }}>
+                        No Resume Content Loaded Yet
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', maxWidth: 300, marginBottom: 16 }}>
+                        Upload your resume file or let the AI Tailor Agent generate a tailored baseline for you.
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
+                          onPress={pickDocument}
+                        >
+                          <Text style={styles.resumeActionButtonText}>📤 Pick File</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.resumeActionButton, { backgroundColor: '#10b981' }]}
+                          onPress={handleTailorResumeForCurrentJob}
+                        >
+                          <Text style={styles.resumeActionButtonText}>✨ Generate Baseline</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -2718,6 +3118,74 @@ const styles = StyleSheet.create({
     color: '#065f46',
     fontSize: 12,
     fontWeight: '500',
+  },
+
+  // Resume Quick Box & Screen Styles
+  resumeBox: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  resumeBoxTitle: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  resumeBoxSubtitle: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  resumeViewBtn: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  resumeViewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1d4ed8',
+  },
+  resumeTailorBtn: {
+    backgroundColor: '#10b981',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  resumeTailorBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  resumeActionButton: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  resumeActionButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  resumePaper: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 16,
+  },
+  resumePaperText: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#1e293b',
   },
 });
 

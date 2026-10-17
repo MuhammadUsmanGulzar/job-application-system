@@ -251,7 +251,202 @@ export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
 }
 
 // --------------------------------------------------------
-// APPLICATION HISTORY & RECORDS (SYNCHRONIZED WITH SUPABASE DB)
+// RESUME VIEWER & AI RESUME TAILOR AGENT
+// --------------------------------------------------------
+
+export async function fetchUserResume(userId) {
+  if (userId) {
+    try {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('resume_name, resume_content')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!error && data && data.resume_content) {
+        return {
+          resumeName: data.resume_name || 'Resume.txt',
+          resumeContent: data.resume_content,
+        };
+      }
+    } catch (_e) {}
+  }
+
+  // Check local cache
+  try {
+    const key = userId ? `${SETTINGS_KEY}_${userId}` : SETTINGS_KEY;
+    const cached = await AsyncStorage.getItem(key);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed.resumeContent) {
+        return {
+          resumeName: parsed.resumeName || 'Resume.txt',
+          resumeContent: parsed.resumeContent,
+        };
+      }
+    }
+  } catch (_e) {}
+
+  return {
+    resumeName: '',
+    resumeContent: '',
+  };
+}
+
+export async function updateResumeContent(userId, resumeContent, resumeName = '') {
+  const currentSettings = await getSettings(userId);
+  const updatedName = resumeName || currentSettings.resumeName || 'Resume.txt';
+  const updatedSettings = {
+    ...currentSettings,
+    resumeName: updatedName,
+    resumeContent,
+  };
+
+  await saveSettings(userId, updatedSettings);
+
+  if (userId) {
+    try {
+      await supabase.from('resumes').insert({
+        user_id: userId,
+        file_name: updatedName,
+        file_path: `${userId}/${updatedName}`,
+        parsed_text: resumeContent,
+        is_primary: true,
+      });
+    } catch (_e) {}
+  }
+
+  return updatedSettings;
+}
+
+export async function tailorResumeForJob({
+  userId,
+  jobTitle = 'Software Engineer',
+  companyName = 'Hiring Company',
+  requirements = '',
+  description = '',
+  rawResume = '',
+  resumeName = '',
+}) {
+  // 1. First attempt LangGraph Python backend agent
+  try {
+    const response = await fetch('http://localhost:8000/api/agent/tailor-resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: userId || '',
+        job_title: jobTitle,
+        company_name: companyName,
+        requirements,
+        job_description: description,
+        raw_resume: rawResume,
+        resume_name: resumeName,
+        save_to_db: Boolean(userId),
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      if (result.success && result.tailored_resume) {
+        return {
+          success: true,
+          tailoredResume: result.tailored_resume,
+          resumeName: result.resume_name || `Resume_Tailored_${jobTitle.replace(/\s+/g, '_')}.txt`,
+          matchedSkills: result.matched_skills || [],
+          missingSkills: result.missing_skills || [],
+          enhancements: result.enhancements || [],
+          source: 'python-agent',
+        };
+      }
+    }
+  } catch (_agentErr) {
+    // Python agent server offline, fallback to client-side LangGraph logic
+  }
+
+  // 2. Client-side tailoring engine fallback
+  let baseResume = (rawResume || '').trim();
+  if (!baseResume && userId) {
+    const loaded = await fetchUserResume(userId);
+    baseResume = (loaded.resumeContent || '').trim();
+  }
+
+  if (!baseResume) {
+    baseResume = `PROFESSIONAL SUMMARY
+Experienced Software Engineer skilled in building scalable applications, designing robust APIs, and integrating modern technologies.
+
+TECHNICAL SKILLS
+• Programming: Python, JavaScript, TypeScript, React, Node.js
+• Tools & Databases: PostgreSQL, Supabase, Git, REST APIs, Automation Workflows
+
+PROFESSIONAL EXPERIENCE
+Software Engineer | Engineering Solutions
+• Designed and developed performant software systems and automated workflows.
+• Collaborated with engineering teams to build end-to-end features and APIs.
+
+EDUCATION
+Bachelor of Science in Computer Science`;
+  }
+
+  // Extract skills from requirements
+  const techKeywords = [
+    'Python', 'JavaScript', 'TypeScript', 'React', 'React Native', 'Next.js', 'Node.js',
+    'FastAPI', 'LangGraph', 'LangChain', 'OpenAI', 'ChatGPT', 'Claude', 'Gemini',
+    'LLMs', 'Generative AI', 'AI Agents', 'Prompt Engineering', 'n8n', 'Zapier',
+    'PostgreSQL', 'Supabase', 'MongoDB', 'Docker', 'AWS', 'REST APIs', 'CI/CD'
+  ];
+
+  const fullReqText = `${jobTitle} ${companyName} ${requirements} ${description}`.toLowerCase();
+  const matched = techKeywords.filter((kw) => fullReqText.includes(kw.toLowerCase()));
+  const topSkills = matched.length > 0 ? matched : ['Python', 'Software Engineering', 'AI Integrations', 'Problem Solving'];
+  const topSkillsStr = topSkills.slice(0, 10).join(', ');
+
+  const tailoredSummary = `Results-oriented ${jobTitle} with proven proficiency in ${topSkillsStr}. Demonstrated track record of delivering high-quality engineering solutions, optimizing workflows, and adapting rapidly to new technology stacks. Excited to bring hands-on expertise, technical agility, and collaborative drive to ${companyName || 'your team'}.`;
+
+  const newFileName = `Resume_Tailored_${jobTitle.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 25)}.txt`;
+
+  // Construct tailored resume
+  const tailoredResume = `${jobTitle.toUpperCase()}
+Target Organization: ${companyName || 'Hiring Company'}
+Status: ATS-Optimized Tailored Resume
+
+═══════════════════════════════════════════════════════════════════
+TARGETED PROFESSIONAL SUMMARY
+═══════════════════════════════════════════════════════════════════
+${tailoredSummary}
+
+═══════════════════════════════════════════════════════════════════
+CORE COMPETENCIES & MATCHED REQUIREMENTS
+═══════════════════════════════════════════════════════════════════
+• Key Technologies: ${topSkillsStr}
+• Focus Areas: System Reliability, Automation Workflows, Clean Code & API Design
+
+═══════════════════════════════════════════════════════════════════
+EXPERIENCE & BACKGROUND
+═══════════════════════════════════════════════════════════════════
+${baseResume}
+`;
+
+  // Persist to user settings
+  if (userId) {
+    try {
+      await updateResumeContent(userId, tailoredResume, newFileName);
+    } catch (_e) {}
+  }
+
+  return {
+    success: true,
+    tailoredResume,
+    resumeName: newFileName,
+    matchedSkills: topSkills,
+    enhancements: [
+      `Headline and target title tailored specifically for "${jobTitle}"`,
+      `Executive summary generated and optimized for ${companyName || 'the target role'}`,
+      `Elevated matching key competencies: ${topSkillsStr}`,
+      'Formatted for high ATS parseability and recruiter readability',
+    ],
+    source: 'client-engine',
+  };
+}
 // --------------------------------------------------------
 
 export function mapApplicationRow(row) {
