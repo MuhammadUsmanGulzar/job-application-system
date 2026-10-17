@@ -1,4 +1,6 @@
 import os
+import io
+import html
 import re
 import unicodedata
 from typing import Any, Dict, Optional, List
@@ -36,6 +38,15 @@ class ResumeTailorState(TypedDict, total=False):
     llm_provider: Optional[str]
     llm_api_key: Optional[str]
     llm_model: Optional[str]
+    full_name: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    location: Optional[str]
+    linkedin: Optional[str]
+    github: Optional[str]
+    portfolio: Optional[str]
+    pdf_file_path: Optional[str]
+    pdf_url: Optional[str]
     
     # Processed Fields
     extracted_keywords: List[str]
@@ -219,87 +230,20 @@ def load_user_resume_node(state: ResumeTailorState) -> ResumeTailorState:
                     "logs": logs,
                 }
 
-            # 3. Fallback: Build base resume from user's profile
-            prof = (
-                supabase.from_("users")
-                .select("*")
-                .eq("id", user_id)
-                .maybe_single()
-                .execute()
-            )
-            user_data = prof.data or {}
-            full_name = user_data.get("full_name") or "Applicant"
-            headline = user_data.get("headline") or "Software Engineer"
-            bio = user_data.get("bio") or ""
-            email = user_data.get("email") or ""
-            phone = user_data.get("phone") or ""
-            location = user_data.get("location") or ""
-            portfolio = user_data.get("portfolio") or ""
-            linkedin = user_data.get("linkedin") or ""
-            github = user_data.get("github") or ""
-
-            contact_parts = [p for p in [email, phone, location, linkedin, github, portfolio] if p]
-            contact_line = " | ".join(contact_parts)
-
-            constructed_resume = f"""{full_name}
-{headline}
-{contact_line}
-
-PROFESSIONAL SUMMARY
-{bio or f"Dynamic and results-driven professional with strong technical expertise, proven problem-solving abilities, and passion for delivering robust solutions."}
-
-CORE COMPETENCIES & TECHNICAL SKILLS
-• Programming & Frameworks: Python, JavaScript, TypeScript, React, Node.js
-• AI & Machine Learning: LLM Integrations, Prompt Engineering, API Workflows
-• Databases & Cloud: PostgreSQL, Supabase, Git, RESTful APIs
-
-PROFESSIONAL EXPERIENCE
-Software Engineer | Technology Solutions
-• Developed and deployed scalable full-stack applications with high reliability.
-• Automated workflows and integrated REST APIs to streamline operational efficiency.
-• Collaborated in cross-functional teams to deliver end-to-end software deliverables.
-
-EDUCATION
-Bachelor of Science in Computer Science
-"""
-            logs.append(f"Constructed baseline resume template from profile for {full_name}")
             return {
                 **state,
-                "raw_resume": constructed_resume.strip(),
-                "resume_name": f"{full_name}_Resume.txt",
-                "status": "LOADED",
+                "status": "FAILED",
+                "error": "No source resume was found. Upload a resume before running the tailoring agent so it cannot invent experience or credentials.",
                 "logs": logs,
             }
 
         except Exception as e:
             logs.append(f"Supabase resume load warning: {str(e)}")
 
-    # Generic baseline resume if no user_id or DB failure
-    baseline = """JOHN DOE
-Software Engineer | AI & Full-Stack Developer
-email: applicant@example.com | Phone: +1 555-0199 | Location: Remote
-
-PROFESSIONAL SUMMARY
-Passionate Software Engineer with expertise in building scalable web applications, integrating AI agents, and automating business workflows.
-
-CORE COMPETENCIES & TECHNICAL SKILLS
-• Programming: Python, JavaScript, TypeScript, HTML/CSS
-• Frameworks & Tools: React, React Native, Node.js, FastAPI, n8n, LangGraph
-• Databases: PostgreSQL, Supabase, SQLite
-
-PROFESSIONAL EXPERIENCE
-Software Developer | Tech Solutions
-• Engineered responsive web applications and backend automation workflows.
-• Integrated LLM APIs and modern state management to enhance productivity.
-
-EDUCATION
-B.S. in Computer Science
-"""
     return {
         **state,
-        "raw_resume": baseline,
-        "resume_name": "Resume.txt",
-        "status": "LOADED",
+        "status": "FAILED",
+        "error": "No source resume was provided. Upload a resume before running the tailoring agent.",
         "logs": logs,
     }
 
@@ -308,6 +252,8 @@ def analyze_requirements_node(state: ResumeTailorState) -> ResumeTailorState:
     """
     Node 2: Extracts technical keywords, soft skills, and requirements from the target job posting.
     """
+    if state.get("status") == "FAILED":
+        return state
     logs = list(state.get("logs", []))
     req_text = (state.get("requirements") or "") + " " + (state.get("job_description") or "") + " " + (state.get("job_title") or "")
     
@@ -363,6 +309,8 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
     - Elevates matching technical skills into a highlighted Core Competencies section.
     - Adapts experience bullet points to showcase direct alignment.
     """
+    if state.get("status") == "FAILED":
+        return state
     logs = list(state.get("logs", []))
     raw = state.get("raw_resume", "").strip()
     job_title = (state.get("job_title") or "Software Engineer").strip()
@@ -379,7 +327,7 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
         else:
             missing_skills.append(kw)
 
-    logs.append(f"Skill Alignment: {len(matched_skills)} matched, {len(missing_skills)} to integrate/highlight.")
+    logs.append(f"Skill Alignment: {len(matched_skills)} verified matches, {len(missing_skills)} gaps retained as recommendations.")
 
     # 0. Direct User LLM Resume Tailoring if API key is provided
     llm_api_key = (state.get("llm_api_key") or "").strip()
@@ -406,18 +354,16 @@ Original Resume:
 
 CRITICAL RULES:
 1. Do NOT use ASCII decorative borders or horizontal lines (e.g. NEVER output lines of '═════' or '-----').
-2. Use standard uppercase section titles:
-   [NAME]
-   [HEADLINE / TARGET ROLE]
-   [CONTACT INFO]
+2. Start with the candidate's real name, target headline, and a compact contact line. Never print bracketed placeholders or labels such as "CANDIDATE CONTACT HEADER".
+3. Use standard uppercase section titles:
    PROFESSIONAL SUMMARY
    CORE COMPETENCIES & TECHNICAL SKILLS
    PROFESSIONAL EXPERIENCE
    PROJECTS (if present)
    EDUCATION
-3. Begin every experience bullet point with a strong action verb (e.g., Engineered, Architected, Spearheaded, Automated).
-4. Emphasize verified skills only. Never fabricate employers, universities, or credentials.
-5. Return ONLY a valid JSON object matching this schema:
+4. Begin experience bullets with strong action verbs only when doing so preserves the original factual meaning.
+5. Emphasize verified skills only. Never fabricate skills, metrics, employers, projects, universities, or credentials.
+6. Return ONLY a valid JSON object matching this schema:
 {{
   "tailoredResume": "Complete optimized plain text resume",
   "matchedSkills": ["Skill 1", "Skill 2"],
@@ -466,6 +412,11 @@ CRITICAL RULES:
     # Break raw resume into sections
     lines = raw.split("\n")
     name_line = lines[0].strip() if len(lines) > 0 and lines[0].strip() else "CANDIDATE"
+    original_headline = ""
+    if len(lines) > 1:
+        second = lines[1].strip()
+        if second and not re.search(r"@|phone|\+|https?://|linkedin|github|portfolio", second, re.I) and not re.search(r"^(PROFESSIONAL|SUMMARY|EXPERIENCE|EDUCATION|SKILLS|CORE)", second, re.I):
+            original_headline = second
     
     # Check if second line is a contact line or headline
     contact_info = ""
@@ -474,7 +425,10 @@ CRITICAL RULES:
             contact_info = line.strip()
             break
 
-    if not contact_info and len(lines) > 1:
+    profile_contacts = [(state.get(key) or "").strip() for key in ("email", "phone", "location", "linkedin", "github", "portfolio") if (state.get(key) or "").strip()]
+    if profile_contacts:
+        contact_info = " | ".join(profile_contacts)
+    elif not contact_info and len(lines) > 1:
         contact_info = lines[1].strip()
 
     # Generate tailored summary
@@ -523,7 +477,7 @@ CRITICAL RULES:
             continue
 
         # Skip original name/contact header lines already generated
-        if stripped == name_line or stripped == contact_info:
+        if stripped == name_line or stripped == contact_info or stripped == original_headline:
             continue
 
         # Detect experience or education
@@ -547,19 +501,9 @@ CRITICAL RULES:
         # Retain original bullet points and experience details
         body_lines.append(stripped)
 
-    # If body_lines didn't have experience, supply standard structured template
+    # If section detection was inconclusive, preserve the candidate's original facts.
     if len(body_lines) < 5:
-        body_lines.extend([
-            "",
-            "PROFESSIONAL EXPERIENCE",
-            f"{job_title} | Engineering & Technology Solutions",
-            f"• Implemented robust software features leveraging {top_skills_to_highlight[0] if top_skills_to_highlight else 'Python'} and modern engineering practices.",
-            f"• Optimized system performance, automated manual tasks, and improved overall reliability.",
-            "• Collaborated with cross-functional team members to deliver high-quality deliverables on schedule.",
-            "",
-            "EDUCATION & CREDENTIALS",
-            "Bachelor of Science in Computer Science or Related Field",
-        ])
+        body_lines = [line.strip() for line in lines[1:] if line.strip() and line.strip() != contact_info]
 
     tailored_blocks.extend(body_lines)
     full_tailored_resume = "\n".join(tailored_blocks).strip()
@@ -577,86 +521,146 @@ CRITICAL RULES:
     }
 
 
-def generate_pdf_bytes_from_text(resume_text: str) -> bytes:
-    """
-    Builds a clean, standard ATS-friendly PDF document from resume text using ReportLab.
-    """
-    import io
+def _safe_url(value: str, scheme: str = "https") -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://", "mailto:", "tel:")):
+        return value
+    return f"{scheme}://{value}" if scheme == "https" else f"{scheme}:{value}"
+
+
+def _extract_contact_data(resume_text: str, contact: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    values = {key: (contact or {}).get(key, "").strip() for key in (
+        "full_name", "email", "phone", "location", "linkedin", "github", "portfolio"
+    )}
+    lines = [line.strip() for line in (resume_text or "").splitlines() if line.strip()]
+    if lines and not values["full_name"]:
+        values["full_name"] = lines[0]
+    joined = " | ".join(lines[:6])
+    if not values["email"]:
+        match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", joined)
+        values["email"] = match.group(0) if match else ""
+    if not values["phone"]:
+        match = re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", joined)
+        values["phone"] = match.group(0).strip() if match else ""
+    for key, pattern in (
+        ("linkedin", r"https?://(?:www\.)?linkedin\.com/[^\s|]+"),
+        ("github", r"https?://(?:www\.)?github\.com/[^\s|]+"),
+        ("portfolio", r"https?://[^\s|]+"),
+    ):
+        if not values[key]:
+            matches = re.findall(pattern, joined, re.IGNORECASE)
+            if key == "portfolio":
+                matches = [url for url in matches if "linkedin.com" not in url and "github.com" not in url]
+            values[key] = matches[0].rstrip(".,)") if matches else ""
+    return values
+
+
+def generate_pdf_bytes_from_text(resume_text: str, contact: Optional[Dict[str, str]] = None) -> bytes:
+    """Build a polished, single-column ATS PDF with real clickable contact links."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, HRFlowable
 
     buffer = io.BytesIO()
-    p = canvas.Canvas(buffer, pagesize=letter)
-    page_width, page_height = letter
-    margin = 50
-    max_width = page_width - (margin * 2)
-    y = page_height - margin
-    line_height = 14
+    navy = colors.HexColor("#132238")
+    blue = colors.HexColor("#2563EB")
+    slate = colors.HexColor("#334155")
+    muted = colors.HexColor("#64748B")
+    rule = colors.HexColor("#CBD5E1")
+    contacts = _extract_contact_data(resume_text, contact)
 
-    lines = (resume_text or "").split("\n")
-    for i, raw_line in enumerate(lines):
-        line = raw_line.strip()
-        if not line:
-            y -= line_height * 0.7
-            if y < margin + 20:
-                p.showPage()
-                y = page_height - margin
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setTitle(f"{contacts.get('full_name') or 'Candidate'} - Resume")
+        canvas.setAuthor(contacts.get("full_name") or "Candidate")
+        canvas.setSubject("ATS-optimized professional resume")
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(muted)
+        canvas.drawRightString(letter[0] - 0.62 * inch, 0.34 * inch, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc = BaseDocTemplate(
+        buffer, pagesize=letter, leftMargin=0.62 * inch, rightMargin=0.62 * inch,
+        topMargin=0.46 * inch, bottomMargin=0.5 * inch,
+        title="Professional Resume", author="JobApply Resume Agent",
+    )
+    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="resume", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    doc.addPageTemplates(PageTemplate(id="resume", frames=[frame], onPage=footer))
+    base = getSampleStyleSheet()
+    styles = {
+        "name": ParagraphStyle("Name", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=20, leading=23, textColor=navy, alignment=TA_CENTER, spaceAfter=2),
+        "title": ParagraphStyle("Title", parent=base["Normal"], fontName="Helvetica", fontSize=10.5, leading=13, textColor=slate, alignment=TA_CENTER, spaceAfter=5),
+        "contact": ParagraphStyle("Contact", parent=base["Normal"], fontName="Helvetica", fontSize=8.2, leading=11, textColor=muted, alignment=TA_CENTER, spaceAfter=7),
+        "section": ParagraphStyle("Section", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=10.2, leading=12, textColor=navy, spaceBefore=4.5, spaceAfter=2, keepWithNext=True),
+        "body": ParagraphStyle("Body", parent=base["Normal"], fontName="Helvetica", fontSize=8.4, leading=10.2, textColor=slate, alignment=TA_LEFT, spaceAfter=1.5),
+        "bullet": ParagraphStyle("Bullet", parent=base["Normal"], fontName="Helvetica", fontSize=8.4, leading=10.2, textColor=slate, leftIndent=10, firstLineIndent=-7, bulletIndent=0, spaceAfter=1.2),
+        "role": ParagraphStyle("Role", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=8.9, leading=10.5, textColor=navy, spaceBefore=2, spaceAfter=0.5, keepWithNext=True),
+        "meta": ParagraphStyle("Meta", parent=base["Normal"], fontName="Helvetica-Oblique", fontSize=8, leading=9.8, textColor=muted, spaceAfter=1.5, keepWithNext=True),
+    }
+
+    lines = [line.strip() for line in (resume_text or "").splitlines()]
+    nonempty = [line for line in lines if line]
+    name = contacts.get("full_name") or (nonempty[0] if nonempty else "Candidate")
+    title = ""
+    if len(nonempty) > 1 and not re.search(r"@|\+?\d{7}|linkedin|github|portfolio", nonempty[1], re.I):
+        title = re.sub(r"\s*\|\s*TARGET ROLE\s*$", "", nonempty[1], flags=re.I).title()
+
+    story = [Paragraph(html.escape(name.upper()), styles["name"])]
+    if title:
+        story.append(Paragraph(html.escape(title), styles["title"]))
+    contact_parts = []
+    for label, key, scheme in (
+        ("Email", "email", "mailto"), ("Phone", "phone", "tel"), ("Location", "location", ""),
+        ("LinkedIn", "linkedin", "https"), ("GitHub", "github", "https"), ("Portfolio", "portfolio", "https"),
+    ):
+        value = contacts.get(key, "")
+        if not value:
             continue
-
-        is_heading = (
-            any(line.upper().startswith(h) for h in [
-                "PROFESSIONAL SUMMARY", "SUMMARY", "EXPERIENCE", "WORK EXPERIENCE",
-                "EDUCATION", "SKILLS", "TECHNICAL SKILLS", "PROJECTS", "CORE COMPETENCIES"
-            ])
-            or (line == line.upper() and len(line) < 40 and ":" not in line and not line.startswith("•"))
-        )
-        is_name = (i == 0)
-
-        font_name = "Helvetica-Bold" if (is_name or is_heading) else "Helvetica"
-        font_size = 16 if is_name else (12 if is_heading else 9.5)
-        p.setFont(font_name, font_size)
-
-        if is_name:
-            p.setFillColorRGB(0.08, 0.12, 0.2)
-            y -= 2
-        elif is_heading:
-            p.setFillColorRGB(0.08, 0.14, 0.25)
-            y -= 4
+        shown = value if key in ("email", "phone", "location") else label
+        if scheme:
+            href = html.escape(_safe_url(value, scheme), quote=True)
+            contact_parts.append(f'<link href="{href}" color="#2563EB"><u>{html.escape(shown)}</u></link>')
         else:
-            p.setFillColorRGB(0.15, 0.18, 0.25)
+            contact_parts.append(html.escape(shown))
+    if contact_parts:
+        story.append(Paragraph(" &nbsp;|&nbsp; ".join(contact_parts), styles["contact"]))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=blue, spaceAfter=4))
 
-        # Word wrap
-        words = line.split(" ")
-        curr = ""
-        for w in words:
-            test = f"{curr} {w}".strip()
-            if p.stringWidth(test, font_name, font_size) > max_width and curr:
-                if y < margin + 15:
-                    p.showPage()
-                    p.setFont(font_name, font_size)
-                    y = page_height - margin
-                p.drawString(margin, y, curr)
-                y -= line_height
-                curr = w
-            else:
-                curr = test
+    section_re = re.compile(r"^(PROFESSIONAL SUMMARY|SUMMARY|CORE COMPETENCIES(?: & TECHNICAL SKILLS)?|CORE COMPETENCIES & TARGET SKILLS|TECHNICAL SKILLS|PROFESSIONAL EXPERIENCE|WORK EXPERIENCE|EXPERIENCE|SELECTED AGENTIC AI PROJECTS|PROJECTS(?: & TECHNICAL HIGHLIGHTS)?|EDUCATION(?: & CREDENTIALS)?|CERTIFICATIONS|ACHIEVEMENTS)$", re.I)
+    header_skip = {name.upper(), "CANDIDATE CONTACT HEADER"}
+    skipped_title = False
+    current_section = ""
+    for line in lines:
+        if not line or line.upper() in header_skip or re.fullmatch(r"(?:LINKEDIN\s*\|\s*)?GITHUB\s*\|\s*PORTFOLIO", line, re.I):
+            continue
+        normalized_title = re.sub(r"\s*\|\s*TARGET ROLE\s*$", "", line, flags=re.I).title()
+        if title and not skipped_title and normalized_title == title:
+            skipped_title = True
+            continue
+        if re.search(r"Email:|Phone:|LinkedIn|GitHub|Portfolio", line, re.I) and ("@" in line or "Phone:" in line):
+            continue
+        clean = html.escape(line.lstrip("-• ").strip())
+        if section_re.match(line):
+            current_section = line.upper()
+            heading = Paragraph(html.escape(current_section), styles["section"])
+            divider = HRFlowable(width="100%", thickness=0.45, color=rule, spaceAfter=3)
+            divider.keepWithNext = True
+            story.extend([Spacer(1, 2), heading, divider])
+        elif line.startswith(("-", "•")):
+            story.append(Paragraph(f"<bullet>-</bullet>{clean}", styles["bullet"]))
+        elif " | " in line and len(line) < 120 and not line.endswith("."):
+            is_meta = bool(re.match(r"^(Contract|Full[- ]time|Part[- ]time|\d{4})\b", line, re.I))
+            style = styles["meta"] if is_meta else (styles["body"] if current_section == "CERTIFICATIONS" else styles["role"])
+            story.append(Paragraph(clean, style))
+        else:
+            story.append(Paragraph(clean, styles["body"]))
 
-        if curr:
-            if y < margin + 15:
-                p.showPage()
-                p.setFont(font_name, font_size)
-                y = page_height - margin
-            p.drawString(margin, y, curr)
-            y -= (line_height + 2 if is_heading else line_height)
-
-            if is_heading:
-                p.setStrokeColorRGB(0.82, 0.85, 0.9)
-                p.setLineWidth(0.75)
-                p.line(margin, y + 4, page_width - margin, y + 4)
-                y -= 3
-
-    p.showPage()
-    p.save()
+    doc.build(story)
     return buffer.getvalue()
 
 
@@ -664,6 +668,8 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
     """
     Node 4: Persists the tailored resume back to Supabase database & storage bucket as an ATS PDF document.
     """
+    if state.get("status") == "FAILED":
+        return state
     logs = list(state.get("logs", []))
     save_to_db = state.get("save_to_db", True)
     user_id = state.get("user_id", "").strip()
@@ -705,7 +711,18 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
         # 3. Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}' as PDF
         try:
             try:
-                pdf_payload = generate_pdf_bytes_from_text(tailored)
+                contact = {}
+                try:
+                    profile_result = supabase.from_("users").select(
+                        "full_name,email,phone,location,linkedin,github,portfolio"
+                    ).eq("id", user_id).maybe_single().execute()
+                    contact = (profile_result.data or {}) if profile_result else {}
+                except Exception as profile_err:
+                    logs.append(f"Profile contact lookup notice: {profile_err}")
+                for key in ("full_name", "email", "phone", "location", "linkedin", "github", "portfolio"):
+                    if state.get(key):
+                        contact[key] = state.get(key)
+                pdf_payload = generate_pdf_bytes_from_text(tailored, contact)
                 content_type = "application/pdf"
             except Exception as pdf_gen_err:
                 logs.append(f"ReportLab PDF notice ({pdf_gen_err}), saving raw text payload.")
@@ -717,6 +734,8 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
                 pdf_payload,
                 {"upsert": "true", "content-type": content_type}
             )
+            signed = supabase.storage.from_("resumes").create_signed_url(f"{user_id}/{file_name}", 7200)
+            signed_url = (signed or {}).get("signedURL") or (signed or {}).get("signedUrl") or ""
             logs.append(f"Successfully uploaded tailored resume to Supabase storage bucket 'resumes/{user_id}/{file_name}'.")
         except Exception as st_err:
             logs.append(f"Storage bucket upload notice: {st_err}")
@@ -724,6 +743,8 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
         return {
             **state,
             "resume_name": file_name,
+            "pdf_file_path": f"{user_id}/{file_name}",
+            "pdf_url": signed_url,
             "status": "SAVED",
             "logs": logs,
         }

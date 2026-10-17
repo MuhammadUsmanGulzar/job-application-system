@@ -283,6 +283,7 @@ export async function performLlmResumeOptimization({
   provider = 'OpenAI',
   apiKey = '',
   model = '',
+  profile = {},
 }) {
   const missing = atsReport?.missingSkills || [];
   const matched = atsReport?.matchedSkills || [];
@@ -293,17 +294,18 @@ Your mission is to tailor and optimize the candidate's resume for the target job
 CRITICAL FORMATTING RULES:
 1. OUTPUT CLEAN, PROFESSIONAL PLAIN TEXT ONLY.
 2. DO NOT USE ASCII BORDER BOXES, ASCII LINES, OR CHARACTERS LIKE "═════", "-----", or "=====". Real ATS parsers (Workday, Greenhouse, Taleo) break on them!
-3. Use standard uppercase section headings:
-   - CANDIDATE CONTACT HEADER (Name, Headline, Email | Phone | Location | Links)
+3. Start with the candidate's real name, target headline, and one compact contact line. Never print labels such as "CANDIDATE CONTACT HEADER" or empty LinkedIn/GitHub/Portfolio placeholders.
+4. Use standard uppercase section headings:
    - PROFESSIONAL SUMMARY
    - CORE COMPETENCIES & TECHNICAL SKILLS
    - PROFESSIONAL EXPERIENCE
    - PROJECTS & TECHNICAL HIGHLIGHTS (if applicable)
    - EDUCATION & CREDENTIALS
-4. Retain all factual work experience, real employer names, degrees, and dates.
-5. Upgrade the Professional Summary to clearly position the candidate for the target role ("${jobTitle} at ${companyName || 'the target company'}").
-6. In CORE COMPETENCIES, organize skills into categorized bullet points including relevant target tools (${missing.slice(0, 8).join(', ')}).
-7. Elevate PROFESSIONAL EXPERIENCE bullet points with strong action verbs (Architected, Engineered, Streamlined, Orchestrated) and quantify impact (speed, reliability, time saved, automation metrics).
+5. Retain all factual work experience, real employer names, degrees, dates, links, and metrics.
+6. Never invent a skill, tool, metric, employer, project, credential, or result. Missing job skills remain gaps unless the original resume proves them.
+7. Upgrade the Professional Summary to clearly position the candidate for the target role ("${jobTitle} at ${companyName || 'the target company'}").
+8. In CORE COMPETENCIES, organize only verified skills into categorized bullet points.
+9. Improve experience bullets with strong action verbs while preserving their exact factual meaning and existing metrics.
 
 Your response MUST be strict valid JSON with no markdown wrapping:
 {
@@ -324,6 +326,15 @@ ${description}
 ATS Gap Analysis:
 Matched Skills: ${matched.join(', ') || 'None identified yet'}
 Missing / Gap Skills: ${missing.join(', ') || 'None identified'}
+
+VERIFIED CANDIDATE PROFILE (include only non-empty values):
+Name: ${profile.fullName || ''}
+Email: ${profile.email || ''}
+Phone: ${profile.phone || ''}
+Location: ${profile.location || ''}
+LinkedIn: ${profile.linkedin || ''}
+GitHub: ${profile.github || ''}
+Portfolio: ${profile.portfolio || ''}
 
 ORIGINAL RESUME:
 ${rawResume}`;

@@ -852,6 +852,7 @@ export default function App() {
         llmProvider: settings.llmProvider,
         llmApiKey: settings.llmApiKey,
         llmModel: settings.llmModel,
+        profile,
       });
       if (!result.success || !result.tailoredResume) throw new Error('No updated resume was returned.');
 
@@ -861,6 +862,7 @@ export default function App() {
       setPickedResumeSource('tailored');
       setResumeEditText(result.tailoredResume);
       setResumeTailorResult(result);
+      if (result.signedUrl) setResumePdfUrl(result.signedUrl);
       const analyzed = await handleAnalyzeResumeMatch(null, {
         applicationId: atsApplicationId,
         resumeContent: result.tailoredResume,
@@ -907,6 +909,7 @@ export default function App() {
         llmProvider: settings.llmProvider,
         llmApiKey: settings.llmApiKey,
         llmModel: settings.llmModel,
+        profile,
       });
 
       if (result.success && result.tailoredResume) {
@@ -916,6 +919,7 @@ export default function App() {
         setPickedResumeSource('tailored');
         setResumeEditText(result.tailoredResume);
         setResumeTailorResult(result);
+        if (result.signedUrl) setResumePdfUrl(result.signedUrl);
         showSuccess(
           `Resume tailored for ${targetTitle} at ${targetCompany || 'target company'} & saved in Supabase bucket (${result.bucketPath || result.resumeName})! Picked for this application.`,
           'Resume Tailored & Saved!'

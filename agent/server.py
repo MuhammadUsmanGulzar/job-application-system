@@ -68,6 +68,13 @@ class ResumeTailorRequest(BaseModel):
     llm_provider: str = "OpenAI"
     llm_api_key: str = ""
     llm_model: str = ""
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
+    linkedin: str = ""
+    github: str = ""
+    portfolio: str = ""
 
 class AtsAnalysisRequest(BaseModel):
     user_id: str = ""
@@ -236,6 +243,13 @@ def trigger_agent_tailor_resume(req: ResumeTailorRequest):
         "llm_provider": req.llm_provider,
         "llm_api_key": req.llm_api_key,
         "llm_model": req.llm_model,
+        "full_name": req.full_name,
+        "email": req.email,
+        "phone": req.phone,
+        "location": req.location,
+        "linkedin": req.linkedin,
+        "github": req.github,
+        "portfolio": req.portfolio,
         "status": "STARTING",
         "logs": [],
     }
@@ -252,6 +266,8 @@ def trigger_agent_tailor_resume(req: ResumeTailorRequest):
         "success": True,
         "status": result.get("status"),
         "resume_name": result.get("resume_name"),
+        "pdf_file_path": result.get("pdf_file_path"),
+        "pdf_url": result.get("pdf_url"),
         "tailored_resume": result.get("tailored_resume"),
         "matched_skills": result.get("matched_skills", []),
         "missing_skills": result.get("missing_skills", []),

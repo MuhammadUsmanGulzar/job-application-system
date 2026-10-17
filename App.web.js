@@ -945,6 +945,7 @@ export default function AppWeb() {
         llmProvider: settings.llmProvider,
         llmApiKey: settings.llmApiKey,
         llmModel: settings.llmModel,
+        profile,
       });
 
       if (!result.success || !result.tailoredResume) {
@@ -957,6 +958,7 @@ export default function AppWeb() {
       setPickedResumeSource('tailored');
       setResumeEditText(result.tailoredResume);
       setResumeTailorResult(result);
+      if (result.signedUrl) setResumePdfUrl(result.signedUrl);
 
       const analyzed = await handleAnalyzeResumeMatch(null, {
         applicationId: atsApplicationId,
@@ -1004,6 +1006,7 @@ export default function AppWeb() {
         llmProvider: settings.llmProvider,
         llmApiKey: settings.llmApiKey,
         llmModel: settings.llmModel,
+        profile,
       });
 
       if (result.success && result.tailoredResume) {
@@ -1013,6 +1016,7 @@ export default function AppWeb() {
         setPickedResumeSource('tailored');
         setResumeEditText(result.tailoredResume);
         setResumeTailorResult(result);
+        if (result.signedUrl) setResumePdfUrl(result.signedUrl);
         showSuccess(
           `Resume tailored for ${targetTitle} at ${targetCompany || 'target company'} & saved in Supabase bucket (${result.bucketPath || result.resumeName})! Picked for this application.`,
           'Resume Tailored & Saved!'
@@ -1062,6 +1066,20 @@ export default function AppWeb() {
       return;
     }
     if (typeof document !== 'undefined') {
+      const generatedPdfUrl = resumeTailorResult?.signedUrl || resumePdfUrl;
+      const generatedPdfName = resumeTailorResult?.resumeName || tailoredResumeName || settings.resumeName || 'Resume.pdf';
+      if (generatedPdfUrl && generatedPdfName.toLowerCase().endsWith('.pdf')) {
+        const link = document.createElement('a');
+        link.href = generatedPdfUrl;
+        link.download = generatedPdfName;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showSuccess('Professional PDF downloaded with active hyperlinks.', 'Downloaded');
+        return;
+      }
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
