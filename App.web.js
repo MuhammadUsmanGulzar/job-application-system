@@ -3227,51 +3227,102 @@ export default function AppWeb() {
                   </View>
                 </ScrollView>
               ) : (
-                <ScrollView style={{ maxHeight: 560, marginVertical: 16 }}>
-                  {selectedRecord.isLoadingAts ? (
-                    <View style={{ paddingVertical: 28, alignItems: 'center', justifyContent: 'center' }}>
-                      <ActivityIndicator size="small" color="#416353" style={{ marginBottom: 10 }} />
-                      <Text style={{ fontSize: 13, color: '#64748b' }}>Analyzing resume match for this job...</Text>
+                <View style={{
+                  flexDirection: isCompact ? 'column' : 'row',
+                  gap: 20,
+                  marginVertical: 16,
+                  alignItems: 'stretch',
+                }}>
+                  {/* Left Column: ATS Analytics */}
+                  <View style={{ flex: 1.15, minWidth: isCompact ? '100%' : 440 }}>
+                    <View style={{ marginBottom: 6 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#536159', letterSpacing: 0.6 }}>
+                        ATS MATCH REPORT
+                      </Text>
                     </View>
-                  ) : (selectedRecord.tailoredAtsReport || selectedRecord.atsReport) ? (
-                    <AtsDashboard
-                      compact
-                      report={selectedRecord.tailoredAtsReport || selectedRecord.atsReport}
-                      previousScore={selectedRecord.tailoredAtsReport ? selectedRecord.atsScore : null}
-                    />
-                  ) : null}
-
-                  <View style={{ marginTop: selectedRecord.atsReport || selectedRecord.tailoredAtsReport ? 18 : 0 }}>
-                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#536159', letterSpacing: 0.6, marginBottom: 10 }}>APPLICATION EMAIL</Text>
-                    {selectedRecord.isLoadingEmail ? (
-                      <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center' }}>
-                        <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 10 }} />
-                        <Text style={{ fontSize: 13, color: '#64748b' }}>Loading email content...</Text>
-                      </View>
-                    ) : selectedRecord.generatedEmail ? (
-                      selectedRecord.generatedEmail.includes('<') && selectedRecord.generatedEmail.includes('>') ? (
-                        <RenderHtml
-                          contentWidth={width}
-                          source={{ html: selectedRecord.generatedEmail }}
-                          baseStyle={{ color: '#334155', fontSize: 14, lineHeight: 22 }}
-                        />
+                    <ScrollView style={{ maxHeight: isCompact ? 380 : 540 }} showsVerticalScrollIndicator={true}>
+                      {selectedRecord.isLoadingAts ? (
+                        <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                          <ActivityIndicator size="small" color="#416353" style={{ marginBottom: 10 }} />
+                          <Text style={{ fontSize: 13, color: '#64748b' }}>Analyzing resume match for this job...</Text>
+                        </View>
+                      ) : (selectedRecord.tailoredAtsReport || selectedRecord.atsReport) ? (
+                        <View style={{ marginTop: -14 }}>
+                          <AtsDashboard
+                            compact
+                            report={selectedRecord.tailoredAtsReport || selectedRecord.atsReport}
+                            previousScore={selectedRecord.tailoredAtsReport ? selectedRecord.atsScore : null}
+                          />
+                        </View>
                       ) : (
-                        <Text style={{ color: '#334155', fontSize: 14, lineHeight: 22, whiteSpace: 'pre-wrap' }}>
-                          {selectedRecord.generatedEmail}
-                        </Text>
-                      )
-                    ) : (
-                      <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', marginBottom: 4 }}>
-                          No application email generated yet
-                        </Text>
-                        <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 360 }}>
-                          Return to Apply to review the ATS report, optimize the resume, and generate the email.
-                        </Text>
-                      </View>
-                    )}
+                        <View style={{ paddingVertical: 36, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', minHeight: 240 }}>
+                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#334155', marginBottom: 4 }}>
+                            No ATS analysis available
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', maxWidth: 300, lineHeight: 18 }}>
+                            Run ATS analysis from the Apply tab to view match breakdown and recommendations.
+                          </Text>
+                        </View>
+                      )}
+                    </ScrollView>
                   </View>
-                </ScrollView>
+
+                  {/* Right Column: Application Email */}
+                  <View style={{ flex: 1, minWidth: isCompact ? '100%' : 400 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#536159', letterSpacing: 0.6 }}>
+                        APPLICATION EMAIL
+                      </Text>
+                      {selectedRecord.generatedEmail ? (
+                        <TouchableOpacity 
+                          onPress={() => handleCopy(htmlToPlainText(selectedRecord.generatedEmail))}
+                          style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: '#f1f5f9' }}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Copy</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <View style={{ 
+                      flex: 1, 
+                      backgroundColor: '#f8fafc', 
+                      borderRadius: 10, 
+                      borderWidth: 1, 
+                      borderColor: '#e2e8f0', 
+                      padding: 16,
+                      minHeight: isCompact ? 220 : 500,
+                    }}>
+                      {selectedRecord.isLoadingEmail ? (
+                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+                          <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 10 }} />
+                          <Text style={{ fontSize: 13, color: '#64748b' }}>Loading email content...</Text>
+                        </View>
+                      ) : selectedRecord.generatedEmail ? (
+                        <ScrollView style={{ maxHeight: isCompact ? 320 : 490 }} showsVerticalScrollIndicator={true}>
+                          {selectedRecord.generatedEmail.includes('<') && selectedRecord.generatedEmail.includes('>') ? (
+                            <RenderHtml
+                              contentWidth={isCompact ? width : Math.min(width * 0.42, 500)}
+                              source={{ html: selectedRecord.generatedEmail }}
+                              baseStyle={{ color: '#334155', fontSize: 14, lineHeight: 22 }}
+                            />
+                          ) : (
+                            <Text style={{ color: '#334155', fontSize: 14, lineHeight: 22, whiteSpace: 'pre-wrap' }}>
+                              {selectedRecord.generatedEmail}
+                            </Text>
+                          )}
+                        </ScrollView>
+                      ) : (
+                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 36 }}>
+                          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', marginBottom: 4 }}>
+                            No application email generated yet
+                          </Text>
+                          <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 300 }}>
+                            Return to Apply to review the ATS report, optimize the resume, and generate the email.
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
               )}
 
               <View style={styles.modalActions}>
@@ -4332,10 +4383,11 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 28,
-    width: '100%',
-    maxWidth: 680,
+    width: '95%',
+    maxWidth: 1180,
+    maxHeight: '92vh',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.09,
