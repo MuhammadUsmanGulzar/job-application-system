@@ -734,51 +734,64 @@ export default function App() {
 
     let directWebhookContent = '';
 
-    // 5. Trigger the n8n webhook asynchronously
-    fetch(n8nWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(webhookPayload),
-    })
-      .then(async (wbRes) => {
-        if (wbRes.ok) {
-          const rawText = await wbRes.text();
-          if (rawText && rawText.trim()) {
-            try {
-              const data = JSON.parse(rawText);
-              if (typeof data === 'string') directWebhookContent = data;
-              else if (Array.isArray(data) && data.length > 0) {
-                const first = data[0];
-                directWebhookContent = first.generated_email || first.output || first.text || first.response || first.body || '';
-              } else if (typeof data === 'object' && data !== null) {
-                directWebhookContent = data.generated_email || data.output || data.text || data.response || data.body || '';
-              }
-            } catch (_) {
-              if (rawText.length > 30) directWebhookContent = rawText;
-            }
-          }
-        }
-      })
-      .catch((wbErr) => {
-        console.warn('n8n Webhook trigger note:', wbErr.message);
-      });
-
-    // 6. Poll application_emails table in Supabase
-    const pollStartTime = Date.now();
-    const maxPollTimeMs = 120000; // 2 minutes
-
-    const onEmailFound = async (generatedContent) => {
+    // Stop generation countdown timer and dismiss popup
+    const stopGenerationTimer = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
       setIsGenerating(false);
       setShowCountdownPopup(false);
+    };
+
+    const extractEmailContent = (rawText) => {
+      if (!rawText || typeof rawText !== 'string' || !rawText.trim()) return '';
+      try {
+        const data = JSON.parse(rawText);
+        if (typeof data === 'string') return data.trim();
+        if (Array.isArray(data) && data.length > 0) {
+          const first = data[0];
+          if (typeof first === 'string') return first.trim();
+          return (
+            first.generated_email ||
+            first.generatedEmail ||
+            first.output ||
+            first.text ||
+            first.response ||
+            first.body ||
+            first.email ||
+            first.email_body ||
+            first.content ||
+            first.result ||
+            ''
+          ).trim();
+        }
+        if (typeof data === 'object' && data !== null) {
+          return (
+            data.generated_email ||
+            data.generatedEmail ||
+            data.output ||
+            data.text ||
+            data.response ||
+            data.body ||
+            data.email ||
+            data.email_body ||
+            data.content ||
+            data.result ||
+            ''
+          ).trim();
+        }
+      } catch (_) {
+        if (rawText.length > 30) return rawText.trim();
+      }
+      return '';
+    };
+
+    const onEmailFound = async (generatedContent) => {
+      stopGenerationTimer();
 
       // 1. Update the record in 'applications' table: status becomes 'Generated'
-      if (createdAppId) {
+      if (createdAppId && generatedContent) {
         await updateApplicationGeneratedEmail(userId, createdAppId, generatedContent);
       }
 
@@ -796,7 +809,7 @@ export default function App() {
         recipientEmail: activeRecipientEmail,
         requirements: activeRequirements,
         description: activeDescription,
-        generatedEmail: generatedContent,
+        generatedEmail: generatedContent || dbRecord?.generatedEmail || '',
         status: 'Generated',
         createdAt: dbRecord?.createdAt || createdApp?.createdAt || new Date().toISOString(),
       };
@@ -804,6 +817,80 @@ export default function App() {
       // Immediately open full details modal
       setSelectedRecord(finalResult);
     };
+
+    // 5. Trigger the n8n webhook asynchronously
+    fetch(n8nWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(webhookPayload),
+    })
+      .then(async (wbRes) => {
+        // Webhook responded back! Immediately stop the timer & countdown popup
+        stopGenerationTimer();
+
+        let extractedEmail = '';
+        if (wbRes.ok) {
+          try {
+            const rawText = await wbRes.text();
+            extractedEmail = extractEmailContent(rawText);
+          } catch (_txtErr) {}
+        }
+
+        if (extractedEmail) {
+          await onEmailFound(extractedEmail);
+          return;
+        }
+
+        // Webhook completed: check if email was stored in DB directly
+        const emailRecord = await fetchLatestApplicationEmail(userId, submitTime, createdAppId);
+        if (emailRecord && emailRecord.fullEmail) {
+          await onEmailFound(emailRecord.fullEmail);
+          return;
+        }
+
+        if (createdAppId) {
+          try {
+            const { data: currentApp } = await supabase
+              .from('applications')
+              .select('*')
+              .eq('id', createdAppId)
+              .eq('user_id', userId)
+              .single();
+
+            if (currentApp && currentApp.generated_email) {
+              await onEmailFound(currentApp.generated_email);
+              return;
+            }
+          } catch (_checkErr) {}
+        }
+
+        // Allow a small 400ms buffer in case DB write is finishing
+        setTimeout(async () => {
+          try {
+            const retryEmail = await fetchLatestApplicationEmail(userId, submitTime, createdAppId);
+            if (retryEmail && retryEmail.fullEmail) {
+              await onEmailFound(retryEmail.fullEmail);
+              return;
+            }
+            const refreshedList = await getApplications(userId);
+            setApplications(refreshedList);
+            const dbRec = refreshedList.find(a => a.id === createdAppId);
+            if (dbRec && dbRec.generatedEmail) {
+              setSelectedRecord(dbRec);
+              setGeneratedResult(dbRec);
+            }
+          } catch (_) {}
+        }, 400);
+      })
+      .catch((wbErr) => {
+        console.warn('n8n Webhook trigger note:', wbErr.message);
+      });
+
+    // 6. Poll application_emails table in Supabase
+    const pollStartTime = Date.now();
+    const maxPollTimeMs = 120000; // 2 minutes
 
     pollIntervalRef.current = setInterval(async () => {
       // 1. Check if 'applications' table has updated generated_email directly
@@ -838,12 +925,7 @@ export default function App() {
 
       // 4. Check timeout
       if (Date.now() - pollStartTime > maxPollTimeMs) {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
-        setIsGenerating(false);
-        setShowCountdownPopup(false);
+        stopGenerationTimer();
         showError(
           'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.',
           'Generation Timeout'
