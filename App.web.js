@@ -200,6 +200,7 @@ export const parseRawHiringPost = (raw) => {
 export default function AppWeb() {
   const { width } = useWindowDimensions();
   const isCompact = width < 980;
+  const isMobile = width < 640;
 
   // Custom Alert & Popup State
   const [alertConfig, setAlertConfig] = useState({
@@ -1356,9 +1357,9 @@ export default function AppWeb() {
   // ---------------- AUTH SCREEN ----------------
   if (!isAuthenticated) {
     return (
-      <View style={styles.webContainer}>
+      <View style={[styles.webContainer, isCompact && styles.webContainerCompact]}>
         {/* Left Side: Hero Section */}
-        <View style={styles.leftPanel}>
+        <View style={[styles.leftPanel, isCompact && styles.leftPanelCompact]}>
           <View style={styles.heroContent}>
             <View style={styles.badge}>
             <Text style={styles.badgeText}>JOB APPLICATION WORKSPACE</Text>
@@ -1386,8 +1387,8 @@ export default function AppWeb() {
         </View>
         
         {/* Right Side: Auth Form */}
-        <View style={styles.rightPanel}>
-          <View style={styles.authCard}>
+        <View style={[styles.rightPanel, isCompact && styles.rightPanelCompact]}>
+          <View style={[styles.authCard, isMobile && styles.authCardMobile]}>
             <View style={styles.authHeader}>
               <Text style={styles.authTitle}>
                 {isLoginMode ? 'Welcome Back' : 'Create Account'}
@@ -1618,16 +1619,31 @@ export default function AppWeb() {
   return (
     <View style={styles.webAppContainer}>
       {/* Top Header & Navigation */}
-      <View style={[styles.webNavbar, isCompact && styles.webNavbarCompact]}>
-        <View style={styles.brandContainer}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>J</Text>
+      <View style={[styles.webNavbar, isCompact && styles.webNavbarCompact, isMobile && styles.webNavbarMobile]}>
+        <View style={[styles.brandRow, isMobile && styles.brandRowMobile]}>
+          <View style={styles.brandContainer}>
+            <View style={styles.logoBadge}>
+              <Text style={styles.logoBadgeText}>J</Text>
+            </View>
+            <View>
+              <Text style={styles.navbarBrand}>JobApply</Text>
+              {isMobile ? <Text style={styles.navbarCaption}>Application workspace</Text> : null}
+            </View>
           </View>
-          <Text style={styles.navbarBrand}>JobApply</Text>
+          {isMobile ? (
+            <TouchableOpacity onPress={handleSignOut} style={styles.logoutButton}>
+              <Text style={styles.logoutText}>Sign out</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* Navigation Tabs */}
-        <View style={[styles.navTabs, isCompact && styles.navTabsCompact]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={[styles.navTabsScroller, isMobile && styles.navTabsScrollerMobile]}
+          contentContainerStyle={[styles.navTabs, isCompact && styles.navTabsCompact, isMobile && styles.navTabsMobile]}
+        >
           <TouchableOpacity 
             style={[styles.navTabItem, activeTab === 'apply' && styles.navTabItemActive]} 
             onPress={() => setActiveTab('apply')}
@@ -1672,7 +1688,7 @@ export default function AppWeb() {
               Settings
             </Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
 
         <View style={[styles.navbarRight, isCompact && styles.navbarRightCompact]}>
           <Text style={styles.userEmail}>
@@ -1694,11 +1710,11 @@ export default function AppWeb() {
           <View style={[styles.pageContainer, { maxWidth: 1400 }]}>
             <View style={[styles.splitLayout, isCompact && styles.splitLayoutCompact]}>
               {/* Left Column: AI Agent Raw Job Post Intake Card */}
-              <View style={[styles.flexCard, styles.aiIntakeCard, { flex: 1, marginBottom: 0 }]}>
+              <View style={[styles.flexCard, styles.aiIntakeCard, isMobile && styles.cardMobile, { flex: 1, marginBottom: 0 }]}>
                 <View style={styles.aiIntakeHeader}>
                   <View style={styles.aiIntakeTitleRow}>
                     <View style={styles.aiAgentPill}>
-                      <Text style={styles.aiAgentPillText}>🤖 LangGraph AI Agent</Text>
+                      <Text style={styles.aiAgentPillText}>LANGGRAPH AGENT</Text>
                     </View>
                     <Text style={styles.aiIntakeTitle}>Quick-Fill from Raw Hiring Post</Text>
                   </View>
@@ -1725,7 +1741,7 @@ export default function AppWeb() {
                     {isParsingRawPost ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.aiPrimaryBtnText}>✨ Auto-Fill Form</Text>
+                      <Text style={styles.aiPrimaryBtnText}>Auto-fill form</Text>
                     )}
                   </TouchableOpacity>
 
@@ -1734,14 +1750,14 @@ export default function AppWeb() {
                     onPress={() => handleParseAndPopulate(true)}
                     disabled={isParsingRawPost || isGenerating}
                   >
-                    <Text style={styles.aiWebhookBtnText}>🚀 Auto-Fill & Send to Webhook</Text>
+                    <Text style={styles.aiWebhookBtnText}>Auto-fill and send</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     style={styles.aiSampleBtn}
                     onPress={handleLoadSamplePost}
                   >
-                    <Text style={styles.aiSampleBtnText}>📋 Load Techies Global Sample</Text>
+                    <Text style={styles.aiSampleBtnText}>Load sample</Text>
                   </TouchableOpacity>
 
                   {rawJobPost ? (
@@ -1785,14 +1801,14 @@ export default function AppWeb() {
               </View>
 
               {/* Right Column: Job Application Form Card */}
-              <View style={[styles.flexCard, { flex: 1.15, marginBottom: 0 }]}>
+              <View style={[styles.flexCard, isMobile && styles.cardMobile, { flex: 1.15, marginBottom: 0 }]}>
                 <Text style={styles.cardTitle}>Job Application Form</Text>
                 <Text style={styles.cardDescription}>
                   Add the opportunity details and create a tailored first draft from your saved profile.
                 </Text>
 
-                <View style={styles.formRow}>
-                  <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
+                <View style={[styles.formRow, isMobile && styles.formRowMobile]}>
+                  <View style={[styles.formGroup, { flex: 1 }, !isMobile && { marginRight: 12 }]}>
                     <Text style={styles.label}>Job Title *</Text>
                     <TextInput
                       style={styles.webInput}
@@ -1857,19 +1873,19 @@ export default function AppWeb() {
                   <View style={styles.resumeBoxHeader}>
                     <View style={{ flex: 1, minWidth: 180 }}>
                       <Text style={styles.resumeBoxTitle}>
-                        📄 Attached Resume: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{settings.resumeName || 'Master Resume.txt'}</Text>
+                        Attached resume: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{settings.resumeName || 'Master Resume.txt'}</Text>
                       </Text>
                       <Text style={styles.resumeBoxSubtitle}>
                         {settings.resumeContent ? `${settings.resumeContent.length} chars • Ready to submit or tailor` : 'No resume uploaded yet'}
                       </Text>
                     </View>
 
-                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
                       <TouchableOpacity
                         style={styles.resumeViewBtn}
                         onPress={() => setActiveTab('resume')}
                       >
-                        <Text style={styles.resumeViewBtnText}>👁️ View Resume</Text>
+                        <Text style={styles.resumeViewBtnText}>View resume</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -1880,7 +1896,7 @@ export default function AppWeb() {
                         {isTailoringResume ? (
                           <ActivityIndicator size="small" color="#ffffff" />
                         ) : (
-                          <Text style={styles.resumeTailorBtnText}>✨ Tailor for this Job</Text>
+                          <Text style={styles.resumeTailorBtnText}>Tailor for this job</Text>
                         )}
                       </TouchableOpacity>
                     </View>
@@ -1919,7 +1935,7 @@ export default function AppWeb() {
         {/* ================= TAB 2: CANDIDATE PROFILE & SOCIALS ================= */}
         {activeTab === 'profile' && (
           <View style={styles.pageContainer}>
-            <View style={styles.webCard}>
+            <View style={[styles.webCard, isMobile && styles.cardMobile]}>
               <View style={styles.cardHeader}>
                 <View style={styles.iconCircle}>
                   <Text style={styles.profileMark}>ID</Text>
@@ -1933,7 +1949,7 @@ export default function AppWeb() {
               </View>
 
               {/* Row 1: Full Name & Professional Headline */}
-              <View style={{ flexDirection: 'row', gap: 16 }}>
+              <View style={[styles.responsiveRow, isMobile && styles.responsiveRowMobile]}>
                 <View style={[styles.formGroup, { flex: 1 }]}>
                   <Text style={styles.label}>Full Name *</Text>
                   <TextInput
@@ -1958,7 +1974,7 @@ export default function AppWeb() {
               </View>
 
               {/* Row 2: Email & Phone Number */}
-              <View style={{ flexDirection: 'row', gap: 16 }}>
+              <View style={[styles.responsiveRow, isMobile && styles.responsiveRowMobile]}>
                 <View style={[styles.formGroup, { flex: 1 }]}>
                   <Text style={styles.label}>Email Address (Recruiter Contact) *</Text>
                   <TextInput
@@ -1986,7 +2002,7 @@ export default function AppWeb() {
               </View>
 
               {/* Row 3: Portfolio & LinkedIn */}
-              <View style={{ flexDirection: 'row', gap: 16 }}>
+              <View style={[styles.responsiveRow, isMobile && styles.responsiveRowMobile]}>
                 <View style={[styles.formGroup, { flex: 1 }]}>
                   <Text style={styles.label}>Portfolio / Personal Website URL *</Text>
                   <TextInput
@@ -2013,7 +2029,7 @@ export default function AppWeb() {
               </View>
 
               {/* Row 4: GitHub & Location */}
-              <View style={{ flexDirection: 'row', gap: 16 }}>
+              <View style={[styles.responsiveRow, isMobile && styles.responsiveRowMobile]}>
                 <View style={[styles.formGroup, { flex: 1 }]}>
                   <Text style={styles.label}>GitHub Profile URL</Text>
                   <TextInput
@@ -2077,12 +2093,12 @@ export default function AppWeb() {
                   ) : null}
 
                   <View style={{ marginTop: 10, gap: 5 }}>
-                    {profile.email ? <Text style={{ fontSize: 13, color: '#475569' }}>📧 {profile.email}</Text> : null}
-                    {profile.phone ? <Text style={{ fontSize: 13, color: '#475569' }}>📱 {profile.phone}</Text> : null}
-                    {profile.portfolio ? <Text style={{ fontSize: 13, color: '#2563eb' }}>🌐 {profile.portfolio}</Text> : null}
-                    {profile.linkedin ? <Text style={{ fontSize: 13, color: '#2563eb' }}>💼 {profile.linkedin}</Text> : null}
-                    {profile.github ? <Text style={{ fontSize: 13, color: '#2563eb' }}>💻 {profile.github}</Text> : null}
-                    {profile.location ? <Text style={{ fontSize: 13, color: '#64748b' }}>📍 {profile.location}</Text> : null}
+                    {profile.email ? <Text style={{ fontSize: 13, color: '#475569' }}>Email · {profile.email}</Text> : null}
+                    {profile.phone ? <Text style={{ fontSize: 13, color: '#475569' }}>Phone · {profile.phone}</Text> : null}
+                    {profile.portfolio ? <Text style={{ fontSize: 13, color: '#2563eb' }}>Portfolio · {profile.portfolio}</Text> : null}
+                    {profile.linkedin ? <Text style={{ fontSize: 13, color: '#2563eb' }}>LinkedIn · {profile.linkedin}</Text> : null}
+                    {profile.github ? <Text style={{ fontSize: 13, color: '#2563eb' }}>GitHub · {profile.github}</Text> : null}
+                    {profile.location ? <Text style={{ fontSize: 13, color: '#64748b' }}>Location · {profile.location}</Text> : null}
                   </View>
                 </View>
               </View>
@@ -2109,7 +2125,7 @@ export default function AppWeb() {
         {/* ================= TAB 3: APPLICATION HISTORY ================= */}
         {activeTab === 'history' && (
           <View style={styles.pageContainer}>
-            <View style={styles.historyHeader}>
+            <View style={[styles.historyHeader, isMobile && styles.historyHeaderMobile]}>
               <View>
                 <Text style={styles.cardTitle}>Application History & Records</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
@@ -2123,10 +2139,10 @@ export default function AppWeb() {
                 </View>
               </View>
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={[styles.historyTools, isMobile && styles.historyToolsMobile]}>
                 <TextInput
-                  style={[styles.webInput, { width: 240, marginBottom: 0 }]}
-                  placeholder="🔍 Search company, title, email..."
+                  style={[styles.webInput, styles.historySearch, isMobile && styles.historySearchMobile]}
+                  placeholder="Search company, title, or email"
                   value={historySearch}
                   onChangeText={setHistorySearch}
                   placeholderTextColor="#9ca3af"
@@ -2140,14 +2156,14 @@ export default function AppWeb() {
                   {isSyncingHistory ? (
                     <ActivityIndicator size="small" color="#2563eb" />
                   ) : (
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#2563eb' }}>🔄 Sync DB</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#2563eb' }}>Sync database</Text>
                   )}
                 </TouchableOpacity>
               </View>
             </View>
 
             {/* Quick Stats */}
-            <View style={styles.statsRow}>
+            <View style={[styles.statsRow, isMobile && styles.statsRowMobile]}>
               <View style={styles.statCard}>
                 <Text style={styles.statNumber}>{applications.length}</Text>
                 <Text style={styles.statLabel}>Total Applications</Text>
@@ -2174,7 +2190,7 @@ export default function AppWeb() {
 
             {filteredApps.length === 0 ? (
               <View style={styles.emptyHistoryBox}>
-                <Text style={{ fontSize: 48, marginBottom: 12 }}>📂</Text>
+                <Text style={styles.emptyPreviewMark}>0</Text>
                 <Text style={styles.emptyPreviewTitle}>No applications found</Text>
                 <Text style={styles.emptyPreviewSub}>
                   {applications.length === 0 
@@ -2195,7 +2211,7 @@ export default function AppWeb() {
                 {filteredApps.map((item) => {
                   const badgeStyle = getStatusBadgeStyle(item.status);
                   return (
-                    <View key={item.id} style={styles.tableRow}>
+                    <View key={item.id} style={[styles.tableRow, isMobile && styles.tableRowMobile]}>
                       <View style={{ flex: 2 }}>
                         <Text style={styles.rowTitle}>{item.jobTitle}</Text>
                         <Text style={styles.rowCompany}>{item.companyName} • {item.recipientEmail || 'No recipient email'}</Text>
@@ -2205,7 +2221,7 @@ export default function AppWeb() {
                         </Text>
                       </View>
 
-                      <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                      <View style={{ alignItems: isMobile ? 'flex-start' : 'flex-end', justifyContent: 'center' }}>
                         <View style={{ marginBottom: 6 }}>
                           <select
                             value={item.status || 'Generated'}
@@ -2265,11 +2281,11 @@ export default function AppWeb() {
             </Text>
 
             {/* Section 1: Candidate Resume */}
-            <View style={styles.webCard}>
-              <View style={styles.sectionHeader}>
+            <View style={[styles.webCard, isMobile && styles.cardMobile]}>
+              <View style={[styles.sectionHeader, isMobile && styles.sectionHeaderMobile]}>
                 <Text style={styles.sectionTitle}>1. Candidate Resume & Profile</Text>
                 <TouchableOpacity style={styles.uploadBtn} onPress={handleUploadResumeWeb}>
-                  <Text style={styles.uploadBtnText}>📁 Upload Resume File (.pdf, .txt, .doc)</Text>
+                  <Text style={styles.uploadBtnText}>Upload resume (.pdf, .txt, .doc)</Text>
                 </TouchableOpacity>
               </View>
 
@@ -2306,8 +2322,8 @@ export default function AppWeb() {
             </View>
 
             {/* Section 2: LLM API Configuration */}
-            <View style={styles.webCard}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <View style={[styles.webCard, isMobile && styles.cardMobile]}>
+              <View style={[styles.sectionHeader, isMobile && styles.sectionHeaderMobile, { marginBottom: 6 }] }>
                 <Text style={styles.sectionTitle}>2. AI Model & Backend Engine Preferences</Text>
                 <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#bbf7d0' }}>
                   <Text style={styles.securityLabel}>Processed securely</Text>
@@ -2319,12 +2335,12 @@ export default function AppWeb() {
 
               <View style={{ backgroundColor: '#f8fafc', padding: 14, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 18 }}>
                 <Text style={{ fontSize: 13, color: '#334155', lineHeight: 20 }}>
-                  💡 <Text style={{ fontWeight: '700' }}>Architecture Notice:</Text> API keys and model prompts are kept safe on the backend. The frontend handles visual presentation, user inputs, and live generation status.
+                  <Text style={{ fontWeight: '700' }}>Architecture notice:</Text> API keys and model prompts are kept safe on the backend. The frontend handles visual presentation, user inputs, and live generation status.
                 </Text>
               </View>
 
-              <View style={styles.formRow}>
-                <View style={[styles.formGroup, { flex: 1, marginRight: 14 }]}>
+              <View style={[styles.formRow, isMobile && styles.formRowMobile]}>
+                <View style={[styles.formGroup, { flex: 1 }, !isMobile && { marginRight: 14 }]}>
                   <Text style={styles.label}>AI Provider Preference</Text>
                   <select
                     style={{
@@ -2402,7 +2418,7 @@ export default function AppWeb() {
             </View>
 
             {/* Section 3: Google Console / Gmail API */}
-            <View style={styles.webCard}>
+            <View style={[styles.webCard, isMobile && styles.cardMobile]}>
               <View style={styles.sectionHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.sectionTitle}>3. Gmail Account Connection</Text>
@@ -2470,11 +2486,11 @@ export default function AppWeb() {
         {/* ================= TAB 4: RESUME MANAGEMENT & AI TAILORING ================= */}
         {activeTab === 'resume' && (
           <View style={[styles.pageContainer, { maxWidth: 1200 }]}>
-            <View style={styles.webCard}>
+            <View style={[styles.webCard, isMobile && styles.cardMobile]}>
               {/* Resume Card Header */}
               <View style={{ flexDirection: isCompact ? 'column' : 'row', justifyContent: 'space-between', alignItems: isCompact ? 'flex-start' : 'center', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 16, marginBottom: 20, gap: 12 }}>
                 <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                     <Text style={{ fontSize: 20, fontWeight: '800', color: '#0f172a' }}>Your Resume</Text>
                     <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 10, paddingVertical: 2, borderRadius: 12 }}>
                       <Text style={{ fontSize: 11, fontWeight: '700', color: '#1e40af' }}>
@@ -2493,115 +2509,91 @@ export default function AppWeb() {
                 </View>
 
                 {/* Action Controls */}
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <View style={[styles.resumeToolbar, isMobile && styles.resumeToolbarMobile]}>
                   {/* Mode Switcher */}
-                  <View style={{ flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 8, padding: 3 }}>
+                  <View style={[styles.resumeModeSwitcher, isMobile && styles.resumeModeSwitcherMobile]}>
                     <TouchableOpacity
-                      style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
-                        borderRadius: 6,
-                        backgroundColor: resumeViewMode === 'pdf' ? '#ffffff' : 'transparent',
-                        shadowColor: resumeViewMode === 'pdf' ? '#000' : 'transparent',
-                        shadowOpacity: resumeViewMode === 'pdf' ? 0.08 : 0,
-                        shadowRadius: 4,
-                      }}
+                      style={[styles.resumeModeButton, isMobile && styles.resumeModeButtonMobile, resumeViewMode === 'pdf' && styles.resumeModeButtonActive]}
                       onPress={() => {
                         setResumeViewMode('pdf');
                         if (!resumePdfUrl) loadResumePdfUrl();
                       }}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'pdf' ? '#0f172a' : '#64748b' }}>
-                        📄 PDF Viewer
+                        PDF
                       </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
-                        borderRadius: 6,
-                        backgroundColor: resumeViewMode === 'preview' ? '#ffffff' : 'transparent',
-                        shadowColor: resumeViewMode === 'preview' ? '#000' : 'transparent',
-                        shadowOpacity: resumeViewMode === 'preview' ? 0.08 : 0,
-                        shadowRadius: 4,
-                      }}
+                      style={[styles.resumeModeButton, isMobile && styles.resumeModeButtonMobile, resumeViewMode === 'preview' && styles.resumeModeButtonActive]}
                       onPress={() => setResumeViewMode('preview')}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'preview' ? '#0f172a' : '#64748b' }}>
-                        👁️ Text / ATS View
+                        ATS text
                       </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
-                        borderRadius: 6,
-                        backgroundColor: resumeViewMode === 'edit' ? '#ffffff' : 'transparent',
-                        shadowColor: resumeViewMode === 'edit' ? '#000' : 'transparent',
-                        shadowOpacity: resumeViewMode === 'edit' ? 0.08 : 0,
-                        shadowRadius: 4,
-                      }}
+                      style={[styles.resumeModeButton, isMobile && styles.resumeModeButtonMobile, resumeViewMode === 'edit' && styles.resumeModeButtonActive]}
                       onPress={() => {
                         setResumeEditText(settings.resumeContent || '');
                         setResumeViewMode('edit');
                       }}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'edit' ? '#0f172a' : '#64748b' }}>
-                        ✏️ Edit Content
+                        Edit
                       </Text>
                     </TouchableOpacity>
                   </View>
 
                   {/* Quick Action Buttons */}
                   <TouchableOpacity
-                    style={[styles.resumeActionButton, { backgroundColor: '#10b981' }]}
+                    style={[styles.resumeActionButton, styles.resumeActionButtonPrimary, isMobile && styles.resumeActionButtonMobile]}
                     onPress={handleTailorResumeForCurrentJob}
                     disabled={isTailoringResume}
                   >
                     {isTailoringResume ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.resumeActionButtonText}>✨ Tailor for {jobTitle ? `"${jobTitle}"` : 'Job'}</Text>
+                      <Text style={styles.resumeActionButtonTextPrimary}>Tailor for {jobTitle ? `"${jobTitle}"` : 'job'}</Text>
                     )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.resumeActionButton, { backgroundColor: '#0f172a' }]}
+                    style={[styles.resumeActionButton, isMobile && styles.resumeActionButtonMobile]}
                     onPress={() => {
                       const textToCopy = settings.resumeContent || resumeEditText;
                       if (textToCopy) handleCopy(textToCopy);
                       else showError('No resume content to copy.', 'Notice');
                     }}
                   >
-                    <Text style={styles.resumeActionButtonText}>📋 Copy Text</Text>
+                    <Text style={styles.resumeActionButtonTextSecondary}>Copy text</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.resumeActionButton, { backgroundColor: '#475569' }]}
+                    style={[styles.resumeActionButton, isMobile && styles.resumeActionButtonMobile]}
                     onPress={handleDownloadResume}
                   >
-                    <Text style={styles.resumeActionButtonText}>⬇️ Download</Text>
+                    <Text style={styles.resumeActionButtonTextSecondary}>Download</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.resumeActionButton, { backgroundColor: '#0284c7' }]}
+                    style={[styles.resumeActionButton, isMobile && styles.resumeActionButtonMobile]}
                     onPress={handleSyncResumeFromBucket}
                     disabled={isSyncingBucket}
                   >
                     {isSyncingBucket ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.resumeActionButtonText}>🔄 Sync from Bucket</Text>
+                      <Text style={styles.resumeActionButtonTextSecondary}>Sync cloud</Text>
                     )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
+                    style={[styles.resumeActionButton, isMobile && styles.resumeActionButtonMobile]}
                     onPress={handleUploadResumeWeb}
                   >
-                    <Text style={styles.resumeActionButtonText}>📤 Upload New</Text>
+                    <Text style={styles.resumeActionButtonTextSecondary}>Upload new</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2611,7 +2603,7 @@ export default function AppWeb() {
                 <View style={{ backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac', borderRadius: 12, padding: 16, marginBottom: 20 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <Text style={{ fontSize: 16, fontWeight: '800', color: '#166534' }}>
-                      🎯 Resume Tailored by AI Agent
+                      Resume tailored by AI agent
                     </Text>
                     <View style={{ backgroundColor: '#bbf7d0', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
                       <Text style={{ fontSize: 11, fontWeight: '700', color: '#14532d' }}>
@@ -2657,7 +2649,7 @@ export default function AppWeb() {
                   <View style={{ flexDirection: isCompact ? 'column' : 'row', justifyContent: 'space-between', alignItems: isCompact ? 'flex-start' : 'center', backgroundColor: '#f8fafc', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <Text style={{ fontSize: 14, fontWeight: '700', color: '#0f172a' }}>
-                        📄 {settings.resumeName || 'Resume.pdf'}
+                        {settings.resumeName || 'Resume.pdf'}
                       </Text>
                       <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 10, fontWeight: '800', color: '#b91c1c' }}>PDF DOCUMENT</Text>
@@ -2706,7 +2698,7 @@ export default function AppWeb() {
                             cursor: 'pointer',
                           }}
                         >
-                          ⬇ Download PDF
+                          Download PDF
                         </a>
                       ) : null}
 
@@ -2714,14 +2706,14 @@ export default function AppWeb() {
                         style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#f1f5f9', borderRadius: 6, borderWidth: 1, borderColor: '#e2e8f0' }}
                         onPress={() => loadResumePdfUrl()}
                       >
-                        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600' }}>🔄 Reload</Text>
+                        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600' }}>Reload</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
 
                   {/* High-Fidelity Embedded PDF Viewer */}
                   {resumePdfUrl ? (
-                    <div style={{ width: '100%', height: '820px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', backgroundColor: '#525659' }}>
+                    <div style={{ width: '100%', height: isMobile ? '68vh' : '820px', minHeight: isMobile ? '460px' : '620px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', backgroundColor: '#525659' }}>
                       <iframe
                         src={`${resumePdfUrl}#toolbar=1&navpanes=1`}
                         title={settings.resumeName || 'Resume PDF Document'}
@@ -2744,7 +2736,7 @@ export default function AppWeb() {
                         </View>
                       ) : (
                         <View style={{ alignItems: 'center' }}>
-                          <Text style={{ fontSize: 40, marginBottom: 10 }}>📄</Text>
+                          <Text style={styles.emptyPreviewMark}>PDF</Text>
                           <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
                             No PDF Document URL Available
                           </Text>
@@ -2755,7 +2747,7 @@ export default function AppWeb() {
                             style={[styles.resumeActionButton, { backgroundColor: '#0284c7', paddingHorizontal: 20 }]}
                             onPress={handleSyncResumeFromBucket}
                           >
-                            <Text style={styles.resumeActionButtonText}>📥 Load Resume from Bucket</Text>
+                            <Text style={styles.resumeActionButtonTextPrimary}>Load resume from cloud</Text>
                           </TouchableOpacity>
                         </View>
                       )}
@@ -2764,7 +2756,7 @@ export default function AppWeb() {
                 </View>
               ) : resumeViewMode === 'edit' ? (
                 <View style={{ gap: 12 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: 4 }}>
                     <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>
                       Edit Resume Content (Markdown / Plain Text):
                     </Text>
@@ -2793,7 +2785,7 @@ export default function AppWeb() {
                     placeholderTextColor="#94a3b8"
                   />
 
-                  <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 8, flexWrap: 'wrap' }}>
                     <TouchableOpacity
                       style={[styles.resumeActionButton, { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1' }]}
                       onPress={() => {
@@ -2812,7 +2804,7 @@ export default function AppWeb() {
                       {isSavingResumeText ? (
                         <ActivityIndicator size="small" color="#ffffff" />
                       ) : (
-                        <Text style={styles.resumeActionButtonText}>💾 Save Resume Changes</Text>
+                        <Text style={styles.resumeActionButtonText}>Save changes</Text>
                       )}
                     </TouchableOpacity>
                   </View>
@@ -2828,7 +2820,7 @@ export default function AppWeb() {
                     </ScrollView>
                   ) : (
                     <View style={{ paddingVertical: 48, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: 42, marginBottom: 12 }}>📄</Text>
+                      <Text style={styles.emptyPreviewMark}>CV</Text>
                       <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
                         No Resume Content Loaded Yet
                       </Text>
@@ -2844,7 +2836,7 @@ export default function AppWeb() {
                           {isSyncingBucket ? (
                             <ActivityIndicator size="small" color="#ffffff" />
                           ) : (
-                            <Text style={styles.resumeActionButtonText}>📥 Load from Cloud Bucket</Text>
+                            <Text style={styles.resumeActionButtonTextPrimary}>Load from cloud</Text>
                           )}
                         </TouchableOpacity>
 
@@ -2852,14 +2844,14 @@ export default function AppWeb() {
                           style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
                           onPress={handleUploadResumeWeb}
                         >
-                          <Text style={styles.resumeActionButtonText}>📤 Upload Resume</Text>
+                          <Text style={styles.resumeActionButtonTextPrimary}>Upload resume</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
                           style={[styles.resumeActionButton, { backgroundColor: '#10b981' }]}
                           onPress={handleTailorResumeForCurrentJob}
                         >
-                          <Text style={styles.resumeActionButtonText}>✨ Generate Baseline Template</Text>
+                          <Text style={styles.resumeActionButtonTextPrimary}>Generate baseline</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2954,7 +2946,7 @@ export default function AppWeb() {
                     }}
                   >
                     <Text style={{ fontSize: 12, fontWeight: '600', color: isEditingApplication ? '#2563eb' : '#475569' }}>
-                      {isEditingApplication ? '👁️ Preview' : '✏️ Edit'}
+                      {isEditingApplication ? 'Preview' : 'Edit'}
                     </Text>
                   </TouchableOpacity>
 
@@ -3104,7 +3096,7 @@ export default function AppWeb() {
                         setIsEditingApplication(true);
                       }}
                     >
-                      <Text style={[styles.actionPillText, { fontWeight: '600', color: '#2563eb' }]}>✏️ Edit Application</Text>
+                      <Text style={[styles.actionPillText, { fontWeight: '600', color: '#2563eb' }]}>Edit application</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity 
@@ -3206,12 +3198,18 @@ const styles = StyleSheet.create({
     height: '100vh',
     backgroundColor: '#f5f6f3',
   },
+  webContainerCompact: {
+    flexDirection: 'column',
+  },
   leftPanel: {
     flex: 1.2,
     backgroundColor: '#17201c',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 60,
+  },
+  leftPanelCompact: {
+    display: 'none',
   },
   heroContent: {
     maxWidth: 520,
@@ -3270,6 +3268,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 40,
   },
+  rightPanelCompact: {
+    flex: 1,
+    padding: 20,
+  },
   authCard: {
     width: '100%',
     maxWidth: 400,
@@ -3283,6 +3285,10 @@ const styles = StyleSheet.create({
     elevation: 1,
     borderWidth: 1,
     borderColor: '#e3e6e1',
+  },
+  authCardMobile: {
+    borderRadius: 10,
+    padding: 22,
   },
   authHeader: {
     marginBottom: 24,
@@ -3345,6 +3351,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     gap: 12,
   },
+  webNavbarMobile: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  brandRowMobile: {
+    justifyContent: 'space-between',
+    width: '100%',
+  },
   brandContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3368,16 +3390,32 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#17201c',
   },
+  navbarCaption: {
+    color: '#7b847f',
+    fontSize: 10,
+    marginTop: 1,
+  },
+  navTabsScroller: {
+    flexGrow: 0,
+    maxWidth: 520,
+  },
+  navTabsScrollerMobile: {
+    width: '100%',
+    maxWidth: '100%',
+  },
   navTabs: {
     flexDirection: 'row',
     gap: 4,
   },
   navTabsCompact: {
-    flex: 1,
     justifyContent: 'center',
   },
+  navTabsMobile: {
+    justifyContent: 'space-between',
+    minWidth: '100%',
+  },
   navTabItem: {
-    paddingVertical: 10,
+    paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 6,
   },
@@ -3421,7 +3459,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   webContentCompact: {
-    padding: 20,
+    padding: 14,
   },
   pageContainer: {
     width: '100%',
@@ -3435,6 +3473,14 @@ const styles = StyleSheet.create({
   },
   splitLayoutCompact: {
     flexDirection: 'column',
+  },
+  responsiveRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  responsiveRowMobile: {
+    flexDirection: 'column',
+    gap: 0,
   },
   flexCard: {
     flex: 1,
@@ -3459,6 +3505,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.025,
     shadowRadius: 12,
+  },
+  cardMobile: {
+    borderRadius: 10,
+    padding: 16,
   },
   warningCard: {
     backgroundColor: '#fffbeb',
@@ -3506,6 +3556,9 @@ const styles = StyleSheet.create({
   },
   formRow: {
     flexDirection: 'row',
+  },
+  formRowMobile: {
+    flexDirection: 'column',
   },
   formGroup: {
     marginBottom: 18,
@@ -3713,13 +3766,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 24,
   },
+  historyHeaderMobile: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+    gap: 14,
+  },
+  historyTools: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  historyToolsMobile: {
+    width: '100%',
+  },
+  historySearch: {
+    width: 240,
+    marginBottom: 0,
+  },
+  historySearchMobile: {
+    flex: 1,
+    width: 'auto',
+    minWidth: 0,
+  },
   statsRow: {
     flexDirection: 'row',
     gap: 16,
     marginBottom: 24,
   },
+  statsRowMobile: {
+    flexWrap: 'wrap',
+    gap: 10,
+  },
   statCard: {
     flex: 1,
+    minWidth: 150,
     backgroundColor: '#ffffff',
     borderRadius: 10,
     padding: 20,
@@ -3750,6 +3830,11 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
+  },
+  tableRowMobile: {
+    flexDirection: 'column',
+    gap: 14,
+    padding: 16,
   },
   rowTitle: {
     fontSize: 16,
@@ -3815,6 +3900,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  sectionHeaderMobile: {
+    alignItems: 'flex-start',
+    flexDirection: 'column',
+    gap: 10,
   },
   sectionTitle: {
     fontSize: 17,
@@ -4358,17 +4448,72 @@ const styles = StyleSheet.create({
   },
 
   // Resume Screen & Paper Layout
+  resumeToolbar: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  resumeToolbarMobile: {
+    alignItems: 'stretch',
+    width: '100%',
+  },
+  resumeModeSwitcher: {
+    backgroundColor: '#f1f3f1',
+    borderRadius: 8,
+    flexDirection: 'row',
+    padding: 3,
+  },
+  resumeModeSwitcherMobile: {
+    width: '100%',
+  },
+  resumeModeButton: {
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  resumeModeButtonMobile: {
+    alignItems: 'center',
+    flex: 1,
+    paddingHorizontal: 6,
+  },
+  resumeModeButtonActive: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dfe4e0',
+  },
   resumeActionButton: {
+    backgroundColor: '#ffffff',
+    borderColor: '#d8ded9',
+    borderWidth: 1,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  resumeActionButtonMobile: {
+    flexGrow: 1,
+    minWidth: '47%',
+  },
+  resumeActionButtonPrimary: {
+    backgroundColor: '#253c32',
+    borderColor: '#253c32',
+  },
   resumeActionButtonText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  resumeActionButtonTextPrimary: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  resumeActionButtonTextSecondary: {
+    color: '#35403a',
+    fontSize: 12,
+    fontWeight: '600',
   },
   resumePaper: {
     backgroundColor: '#ffffff',

@@ -1554,7 +1554,7 @@ export default function App() {
             <View style={styles.mobileAiCard}>
               <View style={styles.mobileAiHeader}>
                 <View style={styles.mobileAiBadge}>
-                  <Text style={styles.mobileAiBadgeText}>🤖 LangGraph Agent</Text>
+                  <Text style={styles.mobileAiBadgeText}>LANGGRAPH AGENT</Text>
                 </View>
                 <Text style={styles.mobileAiTitle}>Quick-Fill from Raw Job Post</Text>
               </View>
@@ -1580,7 +1580,7 @@ export default function App() {
                   {isParsingRawPost ? (
                     <ActivityIndicator size="small" color="#ffffff" />
                   ) : (
-                    <Text style={styles.mobileAiBtnText}>✨ Auto-Fill Form</Text>
+                    <Text style={styles.mobileAiBtnText}>Auto-fill form</Text>
                   )}
                 </TouchableOpacity>
 
@@ -1589,7 +1589,7 @@ export default function App() {
                   onPress={() => handleParseAndPopulate(true)}
                   disabled={isParsingRawPost || isGenerating}
                 >
-                  <Text style={styles.mobileAiBtnText}>🚀 Auto-Fill & Webhook</Text>
+                  <Text style={styles.mobileAiBtnText}>Auto-fill and send</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1598,7 +1598,7 @@ export default function App() {
                   style={styles.mobileAiBtnAmber}
                   onPress={handleLoadSamplePost}
                 >
-                  <Text style={styles.mobileAiBtnAmberText}>📋 Load Techies Global Sample</Text>
+                  <Text style={styles.mobileAiBtnAmberText}>Load sample</Text>
                 </TouchableOpacity>
 
                 {rawJobPost ? (
@@ -1669,7 +1669,7 @@ export default function App() {
               <View style={styles.resumeBox}>
                 <View style={{ flex: 1, marginBottom: 8 }}>
                   <Text style={styles.resumeBoxTitle}>
-                    📄 Resume: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{settings.resumeName || 'Primary Resume'}</Text>
+                    Resume: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{settings.resumeName || 'Primary Resume'}</Text>
                   </Text>
                   <Text style={styles.resumeBoxSubtitle}>
                     {settings.resumeContent ? `${settings.resumeContent.length} chars • Ready to submit or tailor` : 'No resume uploaded yet'}
@@ -1681,7 +1681,7 @@ export default function App() {
                     style={styles.resumeViewBtn}
                     onPress={() => setActiveTab('resume')}
                   >
-                    <Text style={styles.resumeViewBtnText}>👁️ View Resume</Text>
+                    <Text style={styles.resumeViewBtnText}>View resume</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1692,7 +1692,7 @@ export default function App() {
                     {isTailoringResume ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.resumeTailorBtnText}>✨ Tailor for this Job</Text>
+                      <Text style={styles.resumeTailorBtnText}>Tailor for this job</Text>
                     )}
                   </TouchableOpacity>
                 </View>
@@ -1829,12 +1829,12 @@ export default function App() {
                     </Text>
                   ) : null}
                   <View style={{ marginTop: 6, gap: 3 }}>
-                    {profile.email ? <Text style={{ fontSize: 12, color: '#475569' }}>📧 {profile.email}</Text> : null}
-                    {profile.phone ? <Text style={{ fontSize: 12, color: '#475569' }}>📱 {profile.phone}</Text> : null}
-                    {profile.portfolio ? <Text style={{ fontSize: 12, color: '#2563eb' }}>🌐 {profile.portfolio}</Text> : null}
-                    {profile.linkedin ? <Text style={{ fontSize: 12, color: '#2563eb' }}>💼 {profile.linkedin}</Text> : null}
-                    {profile.github ? <Text style={{ fontSize: 12, color: '#2563eb' }}>💻 {profile.github}</Text> : null}
-                    {profile.location ? <Text style={{ fontSize: 12, color: '#64748b' }}>📍 {profile.location}</Text> : null}
+                    {profile.email ? <Text style={{ fontSize: 12, color: '#475569' }}>Email · {profile.email}</Text> : null}
+                    {profile.phone ? <Text style={{ fontSize: 12, color: '#475569' }}>Phone · {profile.phone}</Text> : null}
+                    {profile.portfolio ? <Text style={{ fontSize: 12, color: '#2563eb' }}>Portfolio · {profile.portfolio}</Text> : null}
+                    {profile.linkedin ? <Text style={{ fontSize: 12, color: '#2563eb' }}>LinkedIn · {profile.linkedin}</Text> : null}
+                    {profile.github ? <Text style={{ fontSize: 12, color: '#2563eb' }}>GitHub · {profile.github}</Text> : null}
+                    {profile.location ? <Text style={{ fontSize: 12, color: '#64748b' }}>Location · {profile.location}</Text> : null}
                   </View>
                 </View>
               </View>
@@ -1882,7 +1882,7 @@ export default function App() {
                   {isSyncingHistory ? (
                     <ActivityIndicator size="small" color="#2563eb" />
                   ) : (
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#2563eb' }}>🔄 Sync DB</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#2563eb' }}>Sync database</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -1890,7 +1890,7 @@ export default function App() {
 
             {applications.length === 0 ? (
               <View style={[styles.card, { alignItems: 'center', paddingVertical: 40 }]}>
-                <Text style={{ fontSize: 40, marginBottom: 12 }}>📂</Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 12 }}>0 RECORDS</Text>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>No Applications Yet</Text>
                 <Text style={{ color: '#64748b', textAlign: 'center', marginBottom: 16 }}>
                   Fill in the job details under the Apply tab to generate your first pitch.
@@ -1947,7 +1947,7 @@ export default function App() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <Text style={styles.cardTitle}>1. Candidate Resume</Text>
                 <TouchableOpacity style={styles.smallActionBtn} onPress={handleUploadResumeMobile}>
-                  <Text style={styles.smallActionBtnText}>📁 Pick File</Text>
+                  <Text style={styles.smallActionBtnText}>Choose file</Text>
                 </TouchableOpacity>
               </View>
               
@@ -2219,7 +2219,7 @@ export default function App() {
                     }}
                   >
                     <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'pdf' ? '#0f172a' : '#64748b' }}>
-                      📄 PDF View
+                      PDF
                     </Text>
                   </TouchableOpacity>
 
@@ -2234,7 +2234,7 @@ export default function App() {
                     onPress={() => setResumeViewMode('preview')}
                   >
                     <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'preview' ? '#0f172a' : '#64748b' }}>
-                      👁️ Text View
+                      ATS text
                     </Text>
                   </TouchableOpacity>
 
@@ -2252,7 +2252,7 @@ export default function App() {
                     }}
                   >
                     <Text style={{ fontSize: 12, fontWeight: '700', color: resumeViewMode === 'edit' ? '#0f172a' : '#64748b' }}>
-                      ✏️ Edit
+                      Edit
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -2279,14 +2279,14 @@ export default function App() {
                       else showError('No resume content to copy.', 'Notice');
                     }}
                   >
-                    <Text style={styles.resumeActionButtonText}>📋 Copy Text</Text>
+                    <Text style={styles.resumeActionButtonText}>Copy text</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     style={[styles.resumeActionButton, { backgroundColor: '#475569' }]}
                     onPress={handleDownloadResume}
                   >
-                    <Text style={styles.resumeActionButtonText}>⬇️ Download</Text>
+                    <Text style={styles.resumeActionButtonText}>Download</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -2297,7 +2297,7 @@ export default function App() {
                     {isSyncingBucket ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.resumeActionButtonText}>🔄 Sync Bucket</Text>
+                      <Text style={styles.resumeActionButtonText}>Sync cloud</Text>
                     )}
                   </TouchableOpacity>
 
@@ -2305,7 +2305,7 @@ export default function App() {
                     style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
                     onPress={pickDocument}
                   >
-                    <Text style={styles.resumeActionButtonText}>📤 Pick File</Text>
+                    <Text style={styles.resumeActionButtonText}>Choose file</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2315,7 +2315,7 @@ export default function App() {
                 <View style={{ backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac', borderRadius: 10, padding: 12, marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                     <Text style={{ fontSize: 14, fontWeight: '800', color: '#166534' }}>
-                      🎯 Resume Tailored by AI Agent
+                      Resume tailored by AI agent
                     </Text>
                     <View style={{ backgroundColor: '#bbf7d0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>
                       <Text style={{ fontSize: 10, fontWeight: '700', color: '#14532d' }}>
@@ -2360,7 +2360,7 @@ export default function App() {
                   <View style={{ backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 14 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                       <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>
-                        📄 {settings.resumeName || 'Resume.pdf'}
+                        {settings.resumeName || 'Resume.pdf'}
                       </Text>
                       <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
                         <Text style={{ fontSize: 10, fontWeight: '800', color: '#b91c1c' }}>PDF DOCUMENT</Text>
@@ -2385,7 +2385,7 @@ export default function App() {
                           onPress={handleSyncResumeFromBucket}
                           disabled={isSyncingBucket}
                         >
-                          <Text style={styles.resumeActionButtonText}>📥 Load from Bucket</Text>
+                          <Text style={styles.resumeActionButtonText}>Load from cloud</Text>
                         </TouchableOpacity>
                       )}
 
@@ -2393,7 +2393,7 @@ export default function App() {
                         style={[styles.resumeActionButton, { backgroundColor: '#475569' }]}
                         onPress={() => loadResumePdfUrl()}
                       >
-                        <Text style={styles.resumeActionButtonText}>🔄 Reload Link</Text>
+                        <Text style={styles.resumeActionButtonText}>Reload</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -2461,7 +2461,7 @@ export default function App() {
                       {isSavingResumeText ? (
                         <ActivityIndicator size="small" color="#ffffff" />
                       ) : (
-                        <Text style={styles.resumeActionButtonText}>💾 Save Changes</Text>
+                        <Text style={styles.resumeActionButtonText}>Save changes</Text>
                       )}
                     </TouchableOpacity>
                   </View>
@@ -2477,7 +2477,7 @@ export default function App() {
                     </ScrollView>
                   ) : (
                     <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: 36, marginBottom: 8 }}>📄</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>RESUME</Text>
                       <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b', marginBottom: 4 }}>
                         No Resume Content Loaded Yet
                       </Text>
@@ -2493,7 +2493,7 @@ export default function App() {
                           {isSyncingBucket ? (
                             <ActivityIndicator size="small" color="#ffffff" />
                           ) : (
-                            <Text style={styles.resumeActionButtonText}>📥 Load from Bucket</Text>
+                            <Text style={styles.resumeActionButtonText}>Load from cloud</Text>
                           )}
                         </TouchableOpacity>
 
@@ -2501,7 +2501,7 @@ export default function App() {
                           style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
                           onPress={pickDocument}
                         >
-                          <Text style={styles.resumeActionButtonText}>📤 Pick File</Text>
+                          <Text style={styles.resumeActionButtonText}>Choose file</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -2552,7 +2552,7 @@ export default function App() {
                     }}
                   >
                     <Text style={{ fontSize: 12, fontWeight: '600', color: isEditingApplication ? '#2563eb' : '#475569' }}>
-                      {isEditingApplication ? '👁️ Preview' : '✏️ Edit'}
+                      {isEditingApplication ? 'Preview' : 'Edit'}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => setSelectedRecord(null)}>
@@ -2626,7 +2626,7 @@ export default function App() {
                         setIsEditingApplication(true);
                       }}
                     >
-                      <Text style={[styles.outlineBtnText, { color: '#2563eb' }]}>✏️ Edit</Text>
+                      <Text style={[styles.outlineBtnText, { color: '#2563eb' }]}>Edit</Text>
                     </TouchableOpacity>
                     <TouchableOpacity 
                       style={[styles.primaryBtn, { flex: 1 }, isSending && styles.disabledBtn]}
