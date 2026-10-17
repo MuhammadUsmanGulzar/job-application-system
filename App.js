@@ -613,8 +613,9 @@ export default function App() {
 
       // 3. Set generatedResult strictly using the record from the database
       const dbRecord = refreshedList.find(a => a.id === createdAppId);
-      const finalResult = dbRecord || {
-        id: createdAppId || Date.now().toString(),
+      const finalResult = {
+        ...(dbRecord || createdApp || {}),
+        id: createdAppId || dbRecord?.id || Date.now().toString(),
         jobTitle: activeJobTitle,
         companyName: activeCompanyName || 'Hiring Company',
         recipientEmail: activeRecipientEmail,
@@ -622,7 +623,7 @@ export default function App() {
         description: activeDescription,
         generatedEmail: generatedContent,
         status: 'Generated',
-        createdAt: createdApp?.createdAt || new Date().toISOString(),
+        createdAt: dbRecord?.createdAt || createdApp?.createdAt || new Date().toISOString(),
       };
       setGeneratedResult(finalResult);
       // Immediately open full details modal
@@ -1684,13 +1685,27 @@ export default function App() {
 
               <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
                 {selectedRecord.isLoadingEmail ? (
-                  <ActivityIndicator size="small" color="#10b981" style={{ marginVertical: 20 }} />
+                  <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
+                    <Text style={{ fontSize: 13, color: '#64748b' }}>Loading email content...</Text>
+                  </View>
+                ) : selectedRecord.generatedEmail ? (
+                  selectedRecord.generatedEmail.includes('<') && selectedRecord.generatedEmail.includes('>') ? (
+                    <RenderHtml
+                      contentWidth={width}
+                      source={{ html: selectedRecord.generatedEmail }}
+                      baseStyle={{ color: '#334155', fontSize: 14 }}
+                    />
+                  ) : (
+                    <Text style={{ color: '#334155', fontSize: 14, lineHeight: 20 }}>
+                      {selectedRecord.generatedEmail}
+                    </Text>
+                  )
                 ) : (
-                  <RenderHtml
-                    contentWidth={width}
-                    source={{ html: selectedRecord.generatedEmail || '' }}
-                    baseStyle={{ color: '#334155', fontSize: 14 }}
-                  />
+                  <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
+                    <Text style={{ fontSize: 13, color: '#64748b' }}>Email is generating or being fetched...</Text>
+                  </View>
                 )}
               </ScrollView>
 

@@ -256,6 +256,29 @@ export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
 
 export function mapApplicationRow(row) {
   if (!row) return null;
+
+  // Extract email body from joined application_emails if present
+  let emailContent = '';
+  if (Array.isArray(row.application_emails) && row.application_emails.length > 0) {
+    const sorted = [...row.application_emails].sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
+    const latest = sorted[0];
+    const body = latest.body || latest.generated_email || latest.content || latest.text || '';
+    const subject = latest.subject || '';
+    if (body || subject) {
+      if (subject && !body.toLowerCase().startsWith('subject:')) {
+        emailContent = `Subject: ${subject}\n\n${body}`;
+      } else {
+        emailContent = body;
+      }
+    }
+  } else if (row.generated_email) {
+    emailContent = row.generated_email;
+  }
+
+  const hasEmail = Boolean(emailContent && emailContent.trim());
+
   return {
     id: row.id,
     jobTitle: row.job_title || '',
@@ -263,8 +286,8 @@ export function mapApplicationRow(row) {
     recipientEmail: row.recipient_email || '',
     requirements: row.requirements || '',
     description: row.description || '',
-    generatedEmail: row.generated_email || '',
-    status: row.status || 'Generating',
+    generatedEmail: emailContent,
+    status: hasEmail && row.status === 'Generating' ? 'Generated' : (row.status || 'Generating'),
     resumeId: row.resume_id || null,
     appliedAt: row.applied_at || null,
     createdAt: row.created_at || new Date().toISOString(),
@@ -275,11 +298,11 @@ export function mapApplicationRow(row) {
 export async function getApplications(userId) {
   if (!userId) return [];
 
-  // 1. Production-level Supabase query directly from 'applications' table
+  // 1. Production-level Supabase query directly from 'applications' table with joined 'application_emails'
   try {
     const { data, error } = await supabase
       .from('applications')
-      .select('*')
+      .select('*, application_emails(*)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -384,23 +407,43 @@ export async function createApplication(userId, formDetails) {
 export async function updateApplicationGeneratedEmail(userId, applicationId, generatedEmail) {
   if (!applicationId) return;
 
-  // 1. Sync to Supabase
+  // 1. Sync status to Supabase (applications table stores status, application_emails stores content)
   if (userId) {
     try {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
       if (isUuid) {
-        const { error } = await supabase
+        // Update applications status to 'Generated'
+        const { error: appErr } = await supabase
           .from('applications')
           .update({
-            generated_email: generatedEmail,
             status: 'Generated',
             updated_at: new Date().toISOString(),
           })
           .eq('id', applicationId)
           .eq('user_id', userId);
 
-        if (error) {
-          console.warn('Error updating generated email in Supabase:', error.message);
+        if (appErr) {
+          console.warn('Error updating status in applications:', appErr.message);
+        }
+
+        // Also ensure application_emails has the record if n8n didn't insert it yet
+        if (generatedEmail) {
+          const { data: existing } = await supabase
+            .from('application_emails')
+            .select('id')
+            .eq('application_id', applicationId)
+            .eq('user_id', userId)
+            .limit(1);
+
+          if (!existing || existing.length === 0) {
+            await supabase.from('application_emails').insert({
+              application_id: applicationId,
+              user_id: userId,
+              body: generatedEmail,
+              status: 'pending',
+              created_at: new Date().toISOString(),
+            });
+          }
         }
       }
     } catch (err) {
@@ -645,9 +688,7 @@ export async function fetchLatestApplicationEmail(userId, submittedAfter, applic
 
     const isUuid = applicationId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId);
 
-    if (isUuid && submittedAfter) {
-      query = query.or(`application_id.eq.${applicationId},created_at.gte.${submittedAfter}`);
-    } else if (isUuid) {
+    if (isUuid) {
       query = query.eq('application_id', applicationId);
     } else if (submittedAfter) {
       query = query.gte('created_at', submittedAfter);

@@ -381,12 +381,17 @@ export default function AppWeb() {
         getApplications(session.user.id).then((freshApps) => {
           setApplications(freshApps);
           setLastSyncedTime(new Date());
+          setSelectedRecord((prev) => {
+            if (!prev) return null;
+            const updated = freshApps.find(a => a.id === prev.id);
+            return updated ? { ...prev, ...updated, generatedEmail: updated.generatedEmail || prev.generatedEmail } : prev;
+          });
         });
 
         if (_payload?.new && _payload.new.id) {
           const mapped = mapApplicationRow(_payload.new);
-          setSelectedRecord((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped } : prev));
-          setGeneratedResult((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped } : prev));
+          setSelectedRecord((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped, generatedEmail: mapped.generatedEmail || prev.generatedEmail } : prev));
+          setGeneratedResult((prev) => (prev && prev.id === mapped.id ? { ...prev, ...mapped, generatedEmail: mapped.generatedEmail || prev.generatedEmail } : prev));
         }
       });
     }
@@ -696,10 +701,11 @@ export default function AppWeb() {
       const refreshedList = await getApplications(userId);
       setApplications(refreshedList);
 
-      // 3. Set generatedResult strictly using the record from the database
+      // 3. Set generatedResult strictly preserving the generated email content
       const dbRecord = refreshedList.find(a => a.id === createdAppId);
-      const finalResult = dbRecord || {
-        id: createdAppId || Date.now().toString(),
+      const finalResult = {
+        ...(dbRecord || createdApp || {}),
+        id: createdAppId || dbRecord?.id || Date.now().toString(),
         jobTitle: activeJobTitle,
         companyName: activeCompanyName || 'Hiring Company',
         recipientEmail: activeRecipientEmail,
@@ -707,7 +713,7 @@ export default function AppWeb() {
         description: activeDescription,
         generatedEmail: generatedContent,
         status: 'Generated',
-        createdAt: createdApp?.createdAt || new Date().toISOString(),
+        createdAt: dbRecord?.createdAt || createdApp?.createdAt || new Date().toISOString(),
       };
       setGeneratedResult(finalResult);
       // Immediately open email details modal for review/copy/sending
@@ -715,34 +721,37 @@ export default function AppWeb() {
     };
 
     pollIntervalRef.current = setInterval(async () => {
-      // 1. Check if 'applications' table has updated generated_email directly
-      if (createdAppId) {
-        try {
-          const { data: currentApp } = await supabase
-            .from('applications')
-            .select('*')
-            .eq('id', createdAppId)
-            .eq('user_id', userId)
-            .single();
-
-          if (currentApp && currentApp.generated_email) {
-            await onEmailFound(currentApp.generated_email);
-            return;
-          }
-        } catch (_checkErr) {}
-      }
-
-      // 2. Check application_emails table in Supabase
+      // 1. Check application_emails table in Supabase by applicationId
       const emailRecord = await fetchLatestApplicationEmail(userId, submitTime, createdAppId);
       if (emailRecord && emailRecord.fullEmail) {
         await onEmailFound(emailRecord.fullEmail);
         return;
       }
 
-      // 3. Check if direct response arrived from webhook
+      // 2. Check if direct response arrived from webhook
       if (directWebhookContent && directWebhookContent.trim()) {
         await onEmailFound(directWebhookContent);
         return;
+      }
+
+      // 3. Check if 'applications' table has updated generated email via join
+      if (createdAppId) {
+        try {
+          const { data: currentApp } = await supabase
+            .from('applications')
+            .select('*, application_emails(*)')
+            .eq('id', createdAppId)
+            .eq('user_id', userId)
+            .single();
+
+          if (currentApp) {
+            const mapped = mapApplicationRow(currentApp);
+            if (mapped && mapped.generatedEmail) {
+              await onEmailFound(mapped.generatedEmail);
+              return;
+            }
+          }
+        } catch (_checkErr) {}
       }
 
       // 4. Check timeout
@@ -846,22 +855,26 @@ export default function AppWeb() {
   };
 
   const handleOpenRecord = async (item) => {
+    if (item.generatedEmail) {
+      setSelectedRecord(item);
+      return;
+    }
     setSelectedRecord({ ...item, isLoadingEmail: true });
     try {
       const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, item.id);
       if (emailRecord && emailRecord.fullEmail) {
         setSelectedRecord(prev => {
           if (prev && prev.id === item.id) {
-            return { ...prev, isLoadingEmail: false, generatedEmail: emailRecord.fullEmail };
+            return { ...prev, isLoadingEmail: false, generatedEmail: emailRecord.fullEmail, status: 'Generated' };
           }
           return prev;
         });
       } else {
-        setSelectedRecord(prev => prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev);
+        setSelectedRecord(prev => (prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev));
       }
     } catch (err) {
       console.warn('Error fetching email for modal:', err);
-      setSelectedRecord(prev => prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev);
+      setSelectedRecord(prev => (prev && prev.id === item.id ? { ...prev, isLoadingEmail: false } : prev));
     }
   };
 
@@ -1192,192 +1205,194 @@ export default function AppWeb() {
       {/* Main Content Area */}
       <ScrollView contentContainerStyle={[styles.webContent, isCompact && styles.webContentCompact]}>
         {/* ================= TAB 1: APPLY FOR JOB ================= */}
+        {/* ================= TAB 1: APPLY FOR JOB ================= */}
         {activeTab === 'apply' && (
-          <View style={styles.pageContainer}>
-
-            {/* AI Agent Raw Job Post Intake Card */}
-            <View style={styles.aiIntakeCard}>
-              <View style={styles.aiIntakeHeader}>
-                <View style={styles.aiIntakeTitleRow}>
-                  <View style={styles.aiAgentPill}>
-                    <Text style={styles.aiAgentPillText}>🤖 LangGraph AI Agent</Text>
+          <View style={[styles.pageContainer, { maxWidth: 1400 }]}>
+            <View style={[styles.splitLayout, isCompact && styles.splitLayoutCompact]}>
+              {/* Left Column: AI Agent Raw Job Post Intake Card */}
+              <View style={[styles.flexCard, styles.aiIntakeCard, { flex: 1, marginBottom: 0 }]}>
+                <View style={styles.aiIntakeHeader}>
+                  <View style={styles.aiIntakeTitleRow}>
+                    <View style={styles.aiAgentPill}>
+                      <Text style={styles.aiAgentPillText}>🤖 LangGraph AI Agent</Text>
+                    </View>
+                    <Text style={styles.aiIntakeTitle}>Quick-Fill from Raw Hiring Post</Text>
                   </View>
-                  <Text style={styles.aiIntakeTitle}>Quick-Fill from Raw Hiring Post</Text>
+                  <Text style={styles.aiIntakeSubtitle}>
+                    Paste unformatted text from LinkedIn, WhatsApp, or job boards. The AI Agent normalizes unicode fonts, extracts key details into the Job Application Form, and dispatches directly to your webhook.
+                  </Text>
                 </View>
-                <Text style={styles.aiIntakeSubtitle}>
-                  Paste unformatted text from LinkedIn, WhatsApp, or job boards. The AI Agent normalizes unicode fonts, extracts key details into the Job Application Form, and dispatches directly to your webhook.
-                </Text>
-              </View>
 
-              <TextInput
-                style={styles.aiTextarea}
-                placeholder='Paste raw hiring post (e.g. "[Techies Global](...) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁... Apply at: managingdirector@techiesglobal.com...")'
-                value={rawJobPost}
-                onChangeText={setRawJobPost}
-                multiline
-                placeholderTextColor="#94a3b8"
-              />
+                <TextInput
+                  style={[styles.aiTextarea, { minHeight: 210 }]}
+                  placeholder='Paste raw hiring post (e.g. "[Techies Global](...) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁... Apply at: managingdirector@techiesglobal.com...")'
+                  value={rawJobPost}
+                  onChangeText={setRawJobPost}
+                  multiline
+                  placeholderTextColor="#94a3b8"
+                />
 
-              <View style={styles.aiButtonRow}>
-                <TouchableOpacity
-                  style={[styles.aiPrimaryBtn, isParsingRawPost && styles.disabledButton]}
-                  onPress={() => handleParseAndPopulate(false)}
-                  disabled={isParsingRawPost}
-                >
-                  {isParsingRawPost ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.aiPrimaryBtnText}>✨ Auto-Fill Form</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.aiWebhookBtn, (isParsingRawPost || isGenerating) && styles.disabledButton]}
-                  onPress={() => handleParseAndPopulate(true)}
-                  disabled={isParsingRawPost || isGenerating}
-                >
-                  <Text style={styles.aiWebhookBtnText}>🚀 Auto-Fill & Send to Webhook</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.aiSampleBtn}
-                  onPress={handleLoadSamplePost}
-                >
-                  <Text style={styles.aiSampleBtnText}>📋 Load Techies Global Sample</Text>
-                </TouchableOpacity>
-
-                {rawJobPost ? (
+                <View style={[styles.aiButtonRow, { flexWrap: 'wrap', gap: 8 }]}>
                   <TouchableOpacity
-                    style={styles.aiClearBtn}
-                    onPress={handleClearRawPost}
+                    style={[styles.aiPrimaryBtn, isParsingRawPost && styles.disabledButton]}
+                    onPress={() => handleParseAndPopulate(false)}
+                    disabled={isParsingRawPost}
                   >
-                    <Text style={styles.aiClearBtnText}>Clear</Text>
+                    {isParsingRawPost ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.aiPrimaryBtnText}>✨ Auto-Fill Form</Text>
+                    )}
                   </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.aiWebhookBtn, (isParsingRawPost || isGenerating) && styles.disabledButton]}
+                    onPress={() => handleParseAndPopulate(true)}
+                    disabled={isParsingRawPost || isGenerating}
+                  >
+                    <Text style={styles.aiWebhookBtnText}>🚀 Auto-Fill & Send to Webhook</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.aiSampleBtn}
+                    onPress={handleLoadSamplePost}
+                  >
+                    <Text style={styles.aiSampleBtnText}>📋 Load Techies Global Sample</Text>
+                  </TouchableOpacity>
+
+                  {rawJobPost ? (
+                    <TouchableOpacity
+                      style={styles.aiClearBtn}
+                      onPress={handleClearRawPost}
+                    >
+                      <Text style={styles.aiClearBtnText}>Clear</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                {rawPostMessage ? (
+                  <View style={styles.aiFeedbackBanner}>
+                    <Text style={styles.aiFeedbackText}>✓ {rawPostMessage}</Text>
+                  </View>
+                ) : null}
+
+                {parsedSummary ? (
+                  <View style={styles.aiExtractedSummary}>
+                    <View style={styles.aiSummaryTag}>
+                      <Text style={styles.aiSummaryTagLabel}>Company:</Text>
+                      <Text style={styles.aiSummaryTagValue}>{parsedSummary.companyName}</Text>
+                    </View>
+                    <View style={styles.aiSummaryTag}>
+                      <Text style={styles.aiSummaryTagLabel}>Role:</Text>
+                      <Text style={styles.aiSummaryTagValue}>{parsedSummary.jobTitle}</Text>
+                    </View>
+                    <View style={styles.aiSummaryTag}>
+                      <Text style={styles.aiSummaryTagLabel}>Email:</Text>
+                      <Text style={styles.aiSummaryTagValue}>{parsedSummary.recipientEmail || 'None'}</Text>
+                    </View>
+                    <View style={styles.aiSummaryTag}>
+                      <Text style={styles.aiSummaryTagLabel}>Requirements:</Text>
+                      <Text style={styles.aiSummaryTagValue}>
+                        {parsedSummary.requirements ? `${parsedSummary.requirements.length} chars` : '0'}
+                      </Text>
+                    </View>
+                  </View>
                 ) : null}
               </View>
 
-              {rawPostMessage ? (
-                <View style={styles.aiFeedbackBanner}>
-                  <Text style={styles.aiFeedbackText}>✓ {rawPostMessage}</Text>
+              {/* Right Column: Job Application Form Card */}
+              <View style={[styles.flexCard, { flex: 1.15, marginBottom: 0 }]}>
+                <Text style={styles.cardTitle}>Job Application Form</Text>
+                <Text style={styles.cardDescription}>
+                  Add the opportunity details and create a tailored first draft from your saved profile.
+                </Text>
+
+                <View style={styles.formRow}>
+                  <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
+                    <Text style={styles.label}>Job Title *</Text>
+                    <TextInput
+                      style={styles.webInput}
+                      placeholder="e.g. Senior Frontend Engineer"
+                      value={jobTitle}
+                      onChangeText={setJobTitle}
+                      placeholderTextColor="#9ca3af"
+                    />
+                  </View>
+
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <Text style={styles.label}>Company Name</Text>
+                    <TextInput
+                      style={styles.webInput}
+                      placeholder="e.g. Acme Corp"
+                      value={companyName}
+                      onChangeText={setCompanyName}
+                      placeholderTextColor="#9ca3af"
+                    />
+                  </View>
                 </View>
-              ) : null}
 
-              {parsedSummary ? (
-                <View style={styles.aiExtractedSummary}>
-                  <View style={styles.aiSummaryTag}>
-                    <Text style={styles.aiSummaryTagLabel}>Company:</Text>
-                    <Text style={styles.aiSummaryTagValue}>{parsedSummary.companyName}</Text>
-                  </View>
-                  <View style={styles.aiSummaryTag}>
-                    <Text style={styles.aiSummaryTagLabel}>Role:</Text>
-                    <Text style={styles.aiSummaryTagValue}>{parsedSummary.jobTitle}</Text>
-                  </View>
-                  <View style={styles.aiSummaryTag}>
-                    <Text style={styles.aiSummaryTagLabel}>Email:</Text>
-                    <Text style={styles.aiSummaryTagValue}>{parsedSummary.recipientEmail || 'None'}</Text>
-                  </View>
-                  <View style={styles.aiSummaryTag}>
-                    <Text style={styles.aiSummaryTagLabel}>Requirements:</Text>
-                    <Text style={styles.aiSummaryTagValue}>
-                      {parsedSummary.requirements ? `${parsedSummary.requirements.length} chars` : '0'}
-                    </Text>
-                  </View>
-                </View>
-              ) : null}
-            </View>
-
-            {/* Job Application Form Card */}
-            <View style={styles.webCard}>
-              <Text style={styles.cardTitle}>Job Application Form</Text>
-              <Text style={styles.cardDescription}>
-                Add the opportunity details and create a tailored first draft from your saved profile.
-              </Text>
-
-              <View style={styles.formRow}>
-                <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
-                  <Text style={styles.label}>Job Title *</Text>
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Recipient / Recruiter Email</Text>
                   <TextInput
                     style={styles.webInput}
-                    placeholder="e.g. Senior Frontend Engineer"
-                    value={jobTitle}
-                    onChangeText={setJobTitle}
+                    placeholder="recruiter@company.com"
+                    value={recipientEmail}
+                    onChangeText={setRecipientEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
                     placeholderTextColor="#9ca3af"
                   />
                 </View>
 
-                <View style={[styles.formGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Company Name</Text>
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Key Requirements & Tech Stack</Text>
                   <TextInput
-                    style={styles.webInput}
-                    placeholder="e.g. Acme Corp"
-                    value={companyName}
-                    onChangeText={setCompanyName}
+                    style={[styles.webInput, styles.textArea, { height: 90 }]}
+                    placeholder="e.g. React, Next.js, Node.js, 4+ years experience, team leadership..."
+                    value={requirements}
+                    onChangeText={setRequirements}
+                    multiline
                     placeholderTextColor="#9ca3af"
                   />
                 </View>
-              </View>
 
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Recipient / Recruiter Email</Text>
-                <TextInput
-                  style={styles.webInput}
-                  placeholder="recruiter@company.com"
-                  value={recipientEmail}
-                  onChangeText={setRecipientEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Job Description / Notes</Text>
+                  <TextInput
+                    style={[styles.webInput, styles.textArea, { height: 110 }]}
+                    placeholder="Paste the full job description or specific points you want mentioned..."
+                    value={description}
+                    onChangeText={setDescription}
+                    multiline
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
 
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Key Requirements & Tech Stack</Text>
-                <TextInput
-                  style={[styles.webInput, styles.textArea, { height: 90 }]}
-                  placeholder="e.g. React, Next.js, Node.js, 4+ years experience, team leadership..."
-                  value={requirements}
-                  onChangeText={setRequirements}
-                  multiline
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Job Description / Notes</Text>
-                <TextInput
-                  style={[styles.webInput, styles.textArea, { height: 110 }]}
-                  placeholder="Paste the full job description or specific points you want mentioned..."
-                  value={description}
-                  onChangeText={setDescription}
-                  multiline
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-
-              <TouchableOpacity 
-                style={[styles.webPrimaryButton, isGenerating && { backgroundColor: '#1e3a8a' }]}
-                onPress={isGenerating ? () => setShowCountdownPopup(true) : handleGenerateAndApply}
-              >
-                {isGenerating ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
-                    <Text style={styles.webPrimaryButtonText}>
-                      Generating Email... ({formatTime(generationSeconds)}) • Open Popup
-                    </Text>
-                  </View>
-                ) : (
-                  <Text style={styles.webPrimaryButtonText}>Generate application</Text>
-                )}
-              </TouchableOpacity>
-
-              {(jobTitle || companyName || recipientEmail || requirements || description) && !isGenerating ? (
                 <TouchableOpacity 
-                  style={{ marginTop: 10, alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10 }}
-                  onPress={clearApplicationForm}
+                  style={[styles.webPrimaryButton, isGenerating && { backgroundColor: '#1e3a8a' }]}
+                  onPress={isGenerating ? () => setShowCountdownPopup(true) : handleGenerateAndApply}
                 >
-                  <Text style={{ color: '#6b7280', fontSize: 13, fontWeight: '500' }}>Clear form</Text>
+                  {isGenerating ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
+                      <Text style={styles.webPrimaryButtonText}>
+                        Generating Email... ({formatTime(generationSeconds)}) • Open Popup
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.webPrimaryButtonText}>Generate application</Text>
+                  )}
                 </TouchableOpacity>
-              ) : null}
+
+                {(jobTitle || companyName || recipientEmail || requirements || description) && !isGenerating ? (
+                  <TouchableOpacity 
+                    style={{ marginTop: 10, alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10 }}
+                    onPress={clearApplicationForm}
+                  >
+                    <Text style={{ color: '#6b7280', fontSize: 13, fontWeight: '500' }}>Clear form</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
           </View>
         )}
@@ -1982,13 +1997,32 @@ export default function AppWeb() {
 
               <ScrollView style={{ maxHeight: 380, marginVertical: 16 }}>
                 {selectedRecord.isLoadingEmail ? (
-                  <ActivityIndicator size="small" color="#10b981" style={{ marginVertical: 20 }} />
+                  <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 10 }} />
+                    <Text style={{ fontSize: 13, color: '#64748b' }}>Loading email content...</Text>
+                  </View>
+                ) : selectedRecord.generatedEmail ? (
+                  selectedRecord.generatedEmail.includes('<') && selectedRecord.generatedEmail.includes('>') ? (
+                    <RenderHtml
+                      contentWidth={width}
+                      source={{ html: selectedRecord.generatedEmail }}
+                      baseStyle={{ color: '#334155', fontSize: 14, lineHeight: 22 }}
+                    />
+                  ) : (
+                    <Text style={{ color: '#334155', fontSize: 14, lineHeight: 22, whiteSpace: 'pre-wrap' }}>
+                      {selectedRecord.generatedEmail}
+                    </Text>
+                  )
                 ) : (
-                  <RenderHtml
-                    contentWidth={width}
-                    source={{ html: selectedRecord.generatedEmail || '' }}
-                    baseStyle={{ color: '#334155', fontSize: 14 }}
-                  />
+                  <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 12 }} />
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', marginBottom: 4 }}>
+                      Email is generating or being fetched...
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 360 }}>
+                      The n8n AI workflow is crafting your tailored pitch. If generation just finished, it will display here momentarily.
+                    </Text>
+                  </View>
                 )}
               </ScrollView>
 
