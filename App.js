@@ -192,15 +192,16 @@ export default function App() {
 
     let extracted = null;
 
-    // 1. Attempt LangGraph Python server endpoint if active locally
+    // 1. Attempt LangGraph Python server endpoint if active locally (parse-only, never save to DB or trigger n8n here)
     try {
       const resp = await fetch('http://localhost:8000/api/agent/parse-job', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           raw_text: rawJobPost,
-          user_id: session?.user?.id || '',
+          user_id: '',
           send_webhook: false,
+          save_to_db: false,
         }),
       });
       if (resp.ok) {
@@ -233,6 +234,10 @@ export default function App() {
 
       if (andSubmit) {
         setIsParsingRawPost(false);
+        if (isGenerating) {
+          setShowCountdownPopup(true);
+          return;
+        }
         await handleGenerateAndApply(extracted);
         return;
       }
@@ -481,6 +486,11 @@ export default function App() {
 
   // Submit Application, Immediately Save to 'applications' table, Start Timer/Loader & Trigger n8n
   const handleGenerateAndApply = async (overrideFields = null) => {
+    if (isGenerating) {
+      setShowCountdownPopup(true);
+      return;
+    }
+
     const activeJobTitle = (overrideFields?.jobTitle || jobTitle || '').trim();
     const activeCompanyName = (overrideFields?.companyName || companyName || '').trim();
     const activeRecipientEmail = (overrideFields?.recipientEmail || recipientEmail || '').trim();
@@ -724,12 +734,13 @@ export default function App() {
         Alert.alert('Success', 'Email triggered successfully via webhook!');
       }
 
-      // Update status to Applied in database
-      const updated = { ...appRecord, status: 'Applied' };
-      const updatedList = await saveApplication(session?.user?.id, updated);
+      // Update status to Applied in database & state immediately
+      const appliedTime = new Date().toISOString();
+      const updated = { ...appRecord, status: 'Applied', appliedAt: appliedTime };
+      const updatedList = await updateApplicationStatus(session?.user?.id, appRecord.id, 'Applied');
       if (updatedList) setApplications(updatedList);
 
-      // Clear the form fields and clear that generated email section
+      // Clear the form fields and sync generated/selected state
       if (generatedResult?.id === appRecord.id || !selectedRecord) {
         clearApplicationForm();
         setGeneratedResult(null);
@@ -737,6 +748,9 @@ export default function App() {
 
       if (selectedRecord?.id === appRecord.id) {
         setSelectedRecord(updated);
+      }
+      if (generatedResult?.id === appRecord.id) {
+        setGeneratedResult(updated);
       }
     } catch (e) {
       Alert.alert('Send Error', 'Failed to send email: ' + e.message);

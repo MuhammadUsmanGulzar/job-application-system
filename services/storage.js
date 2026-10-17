@@ -295,6 +295,62 @@ export function mapApplicationRow(row) {
   };
 }
 
+export function deduplicateApplicationList(apps) {
+  if (!Array.isArray(apps)) return [];
+  const statusRank = (s) => {
+    switch (s) {
+      case 'Applied': return 5;
+      case 'Interviewing': return 4;
+      case 'Accepted': return 4;
+      case 'Rejected': return 4;
+      case 'Generated': return 3;
+      case 'Generating': return 2;
+      case 'Draft': return 1;
+      default: return 0;
+    }
+  };
+
+  const map = new Map();
+  for (const app of apps) {
+    if (!app || !app.id) continue;
+    const normTitle = (app.jobTitle || '').toLowerCase().trim();
+    const normCompany = (app.companyName || '').toLowerCase().trim();
+    const groupKey = `${normTitle}:::${normCompany}`;
+
+    if (!map.has(groupKey)) {
+      map.set(groupKey, { ...app });
+    } else {
+      const existing = map.get(groupKey);
+      const existingRank = statusRank(existing.status);
+      const currentRank = statusRank(app.status);
+
+      const preferCurrent = currentRank > existingRank || 
+        (currentRank === existingRank && new Date(app.createdAt || 0) >= new Date(existing.createdAt || 0));
+
+      const mergedEmail = app.generatedEmail?.trim() || existing.generatedEmail?.trim() || '';
+      const mergedAppliedAt = app.appliedAt || existing.appliedAt || null;
+
+      if (preferCurrent) {
+        map.set(groupKey, {
+          ...app,
+          generatedEmail: mergedEmail,
+          appliedAt: mergedAppliedAt,
+        });
+      } else {
+        map.set(groupKey, {
+          ...existing,
+          generatedEmail: mergedEmail,
+          appliedAt: mergedAppliedAt,
+        });
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  );
+}
+
 export async function getApplications(userId) {
   if (!userId) return [];
 
@@ -307,7 +363,7 @@ export async function getApplications(userId) {
       .order('created_at', { ascending: false });
 
     if (!error && Array.isArray(data)) {
-      const mapped = data.map(mapApplicationRow);
+      const mapped = deduplicateApplicationList(data.map(mapApplicationRow));
       // Synchronize local cache
       const key = `${APPLICATIONS_KEY}_${userId}`;
       await AsyncStorage.setItem(key, JSON.stringify(mapped));
@@ -324,7 +380,7 @@ export async function getApplications(userId) {
     const key = `${APPLICATIONS_KEY}_${userId}`;
     const data = await AsyncStorage.getItem(key);
     if (data) {
-      return JSON.parse(data);
+      return deduplicateApplicationList(JSON.parse(data));
     }
   } catch (e) {
     console.error('Error reading applications from storage', e);
@@ -337,13 +393,43 @@ export async function getApplications(userId) {
  * on button click, returning the real database UUID.
  */
 export async function createApplication(userId, formDetails) {
+  const jobTitle = formDetails.jobTitle?.trim() || '';
+  const companyName = formDetails.companyName?.trim() || 'Hiring Company';
+  const recipientEmail = formDetails.recipientEmail?.trim() || null;
+  const requirements = formDetails.requirements?.trim() || null;
+  const description = formDetails.description?.trim() || null;
+
+  // 1. Deduplication check: if a record for this same user, role & company exists within 15 minutes, reuse it!
+  if (userId) {
+    try {
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { data: existingRecords } = await supabase
+        .from('applications')
+        .select('*, application_emails(*)')
+        .eq('user_id', userId)
+        .eq('job_title', jobTitle)
+        .eq('company_name', companyName)
+        .gte('created_at', fifteenMinutesAgo)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (existingRecords && existingRecords.length > 0) {
+        const existingApp = mapApplicationRow(existingRecords[0]);
+        console.log('Reusing existing application record:', existingApp.id);
+        return { success: true, application: existingApp, id: existingApp.id };
+      }
+    } catch (checkErr) {
+      console.warn('Deduplication check error:', checkErr.message);
+    }
+  }
+
   const insertPayload = {
     user_id: userId,
-    job_title: formDetails.jobTitle?.trim() || '',
-    company_name: formDetails.companyName?.trim() || 'Hiring Company',
-    recipient_email: formDetails.recipientEmail?.trim() || null,
-    requirements: formDetails.requirements?.trim() || null,
-    description: formDetails.description?.trim() || null,
+    job_title: jobTitle,
+    company_name: companyName,
+    recipient_email: recipientEmail,
+    requirements: requirements,
+    description: description,
     status: 'Generating',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -530,7 +616,6 @@ export async function saveApplication(userId, application) {
     recipient_email: application.recipientEmail || null,
     requirements: application.requirements || null,
     description: application.description || null,
-    generated_email: application.generatedEmail || null,
     status: application.status || 'Generated',
     updated_at: now,
   };
