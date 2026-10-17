@@ -31,6 +31,12 @@ import {
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
+import {
+  initSession,
+  clearSessionTimestamps,
+  checkSessionStatus,
+  setupSessionTracking,
+} from './services/sessionManager';
 
 export const getStatusBadgeStyle = (status) => {
   switch (status) {
@@ -162,6 +168,7 @@ export default function AppWeb() {
   const [requirements, setRequirements] = useState('');
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showCountdownPopup, setShowCountdownPopup] = useState(false);
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
   const [isSending, setIsSending] = useState(false);
@@ -292,26 +299,79 @@ export default function AppWeb() {
     setLastSyncedTime(new Date());
   }, []);
 
-  // Auth session listener
+  const handleSignOut = async () => {
+    await clearSessionTimestamps();
+    await supabase.auth.signOut();
+    setSession(null);
+    setIsAuthenticated(false);
+  };
+
+  // Auth session listener with session timeout enforcement (4h inactivity + 7d max limit)
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setIsAuthenticated(!!session);
-      if (session?.user?.id) {
-        loadUserData(session.user.id, session.user.email);
+    let isSubscribed = true;
+
+    const handleSession = async (currentSession) => {
+      if (!currentSession) {
+        if (isSubscribed) {
+          setSession(null);
+          setIsAuthenticated(false);
+        }
+        await clearSessionTimestamps();
+        return;
       }
+
+      // Check if session has exceeded 4 hours inactivity or 7 days limit
+      const status = await checkSessionStatus();
+      if (status.expired) {
+        console.warn('Session expired:', status.reason);
+        await clearSessionTimestamps();
+        await supabase.auth.signOut();
+        if (isSubscribed) {
+          setSession(null);
+          setIsAuthenticated(false);
+          setAuthError(status.reason);
+        }
+        return;
+      }
+
+      // Valid session: initialize/touch timestamps
+      await initSession(currentSession.user?.id);
+      if (isSubscribed) {
+        setSession(currentSession);
+        setIsAuthenticated(true);
+        if (currentSession.user?.id) {
+          loadUserData(currentSession.user.id, currentSession.user.email);
+        }
+      }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleSession(session);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setIsAuthenticated(!!session);
-      if (session?.user?.id) {
-        loadUserData(session.user.id, session.user.email);
-      }
+      handleSession(session);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isSubscribed = false;
+      subscription.unsubscribe();
+    };
   }, [loadUserData]);
+
+  // Active session tracking (listens to mouse, keys, clicks, and visibility change)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const cleanup = setupSessionTracking((reason) => {
+      setSession(null);
+      setIsAuthenticated(false);
+      setAuthError(reason || 'Your session has expired. Please sign in again.');
+      window.alert(reason || 'Your session has expired. Please sign in again.');
+    });
+
+    return cleanup;
+  }, [isAuthenticated]);
 
   // Realtime Supabase DB Listener: automatically syncs applications & status changes
   useEffect(() => {
@@ -550,13 +610,14 @@ export default function AppWeb() {
       console.warn('Initial application save warning:', saveErr.message);
     }
 
-    // 3. Start timer & loader immediately
+    // 3. Start timer, popup & loader immediately
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
 
     setIsGenerating(true);
+    setShowCountdownPopup(true);
     setGenerationSeconds(0);
     setGeneratedResult(null);
 
@@ -624,6 +685,7 @@ export default function AppWeb() {
         pollIntervalRef.current = null;
       }
       setIsGenerating(false);
+      setShowCountdownPopup(false);
 
       // 1. Update the record in 'applications' table: status becomes 'Generated'
       if (createdAppId) {
@@ -636,21 +698,20 @@ export default function AppWeb() {
 
       // 3. Set generatedResult strictly using the record from the database
       const dbRecord = refreshedList.find(a => a.id === createdAppId);
-      if (dbRecord) {
-        setGeneratedResult(dbRecord);
-      } else {
-        setGeneratedResult({
-          id: createdAppId || Date.now().toString(),
-          jobTitle: jobTitle.trim(),
-          companyName: companyName.trim() || 'Hiring Company',
-          recipientEmail: recipientEmail.trim(),
-          requirements: requirements.trim(),
-          description: description.trim(),
-          generatedEmail: generatedContent,
-          status: 'Generated',
-          createdAt: createdApp?.createdAt || new Date().toISOString(),
-        });
-      }
+      const finalResult = dbRecord || {
+        id: createdAppId || Date.now().toString(),
+        jobTitle: activeJobTitle,
+        companyName: activeCompanyName || 'Hiring Company',
+        recipientEmail: activeRecipientEmail,
+        requirements: activeRequirements,
+        description: activeDescription,
+        generatedEmail: generatedContent,
+        status: 'Generated',
+        createdAt: createdApp?.createdAt || new Date().toISOString(),
+      };
+      setGeneratedResult(finalResult);
+      // Immediately open email details modal for review/copy/sending
+      setSelectedRecord(finalResult);
     };
 
     pollIntervalRef.current = setInterval(async () => {
@@ -691,6 +752,7 @@ export default function AppWeb() {
           pollIntervalRef.current = null;
         }
         setIsGenerating(false);
+        setShowCountdownPopup(false);
         window.alert(
           'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.'
         );
@@ -950,6 +1012,7 @@ export default function AppWeb() {
                       } catch (syncErr) {
                         console.warn('Sign-in user sync notice:', syncErr);
                       }
+                      await initSession(data.session.user.id);
                       setSession(data.session);
                       setIsAuthenticated(true);
                     }
@@ -1120,7 +1183,7 @@ export default function AppWeb() {
               ? `${session.user.user_metadata.full_name} (${session.user.email})`
               : (session?.user?.email || 'User')}
           </Text>
-          <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.logoutButton}>
+          <TouchableOpacity onPress={handleSignOut} style={styles.logoutButton}>
             <Text style={styles.logoutText}>Sign Out</Text>
           </TouchableOpacity>
         </View>
@@ -1223,166 +1286,98 @@ export default function AppWeb() {
               ) : null}
             </View>
 
-            <View style={[styles.splitLayout, isCompact && styles.splitLayoutCompact]}>
-              {/* Form Card */}
-              <View style={styles.flexCard}>
-                <Text style={styles.cardTitle}>Job Application Form</Text>
-                <Text style={styles.cardDescription}>
-                  Add the opportunity details and create a tailored first draft from your saved profile.
-                </Text>
+            {/* Job Application Form Card */}
+            <View style={styles.webCard}>
+              <Text style={styles.cardTitle}>Job Application Form</Text>
+              <Text style={styles.cardDescription}>
+                Add the opportunity details and create a tailored first draft from your saved profile.
+              </Text>
 
-                <View style={styles.formRow}>
-                  <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
-                    <Text style={styles.label}>Job Title *</Text>
-                    <TextInput
-                      style={styles.webInput}
-                      placeholder="e.g. Senior Frontend Engineer"
-                      value={jobTitle}
-                      onChangeText={setJobTitle}
-                      placeholderTextColor="#9ca3af"
-                    />
-                  </View>
-
-                  <View style={[styles.formGroup, { flex: 1 }]}>
-                    <Text style={styles.label}>Company Name</Text>
-                    <TextInput
-                      style={styles.webInput}
-                      placeholder="e.g. Acme Corp"
-                      value={companyName}
-                      onChangeText={setCompanyName}
-                      placeholderTextColor="#9ca3af"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Recipient / Recruiter Email</Text>
+              <View style={styles.formRow}>
+                <View style={[styles.formGroup, { flex: 1, marginRight: 12 }]}>
+                  <Text style={styles.label}>Job Title *</Text>
                   <TextInput
                     style={styles.webInput}
-                    placeholder="recruiter@company.com"
-                    value={recipientEmail}
-                    onChangeText={setRecipientEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
+                    placeholder="e.g. Senior Frontend Engineer"
+                    value={jobTitle}
+                    onChangeText={setJobTitle}
                     placeholderTextColor="#9ca3af"
                   />
                 </View>
 
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Key Requirements & Tech Stack</Text>
+                <View style={[styles.formGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Company Name</Text>
                   <TextInput
-                    style={[styles.webInput, styles.textArea, { height: 90 }]}
-                    placeholder="e.g. React, Next.js, Node.js, 4+ years experience, team leadership..."
-                    value={requirements}
-                    onChangeText={setRequirements}
-                    multiline
+                    style={styles.webInput}
+                    placeholder="e.g. Acme Corp"
+                    value={companyName}
+                    onChangeText={setCompanyName}
                     placeholderTextColor="#9ca3af"
                   />
                 </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Job Description / Notes</Text>
-                  <TextInput
-                    style={[styles.webInput, styles.textArea, { height: 110 }]}
-                    placeholder="Paste the full job description or specific points you want mentioned..."
-                    value={description}
-                    onChangeText={setDescription}
-                    multiline
-                    placeholderTextColor="#9ca3af"
-                  />
-                </View>
-
-                <TouchableOpacity 
-                  style={[styles.webPrimaryButton, isGenerating && styles.disabledButton]}
-                  onPress={handleGenerateAndApply}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
-                      <Text style={styles.webPrimaryButtonText}>
-                        Generating Email... ({formatTime(generationSeconds)})
-                      </Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.webPrimaryButtonText}>Generate application</Text>
-                  )}
-                </TouchableOpacity>
-
-                {(jobTitle || companyName || recipientEmail || requirements || description) && !isGenerating ? (
-                  <TouchableOpacity 
-                    style={{ marginTop: 10, alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10 }}
-                    onPress={clearApplicationForm}
-                  >
-                    <Text style={{ color: '#6b7280', fontSize: 13, fontWeight: '500' }}>Clear form</Text>
-                  </TouchableOpacity>
-                ) : null}
               </View>
 
-              {/* Output Preview Card */}
-              <View style={styles.flexCard}>
-                <Text style={styles.cardTitle}>Generated Application Email</Text>
-                <Text style={styles.cardDescription}>
-                  Review, edit, copy, or send your personalized email directly to the recruiter.
-                </Text>
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Recipient / Recruiter Email</Text>
+                <TextInput
+                  style={styles.webInput}
+                  placeholder="recruiter@company.com"
+                  value={recipientEmail}
+                  onChangeText={setRecipientEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
 
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Key Requirements & Tech Stack</Text>
+                <TextInput
+                  style={[styles.webInput, styles.textArea, { height: 90 }]}
+                  placeholder="e.g. React, Next.js, Node.js, 4+ years experience, team leadership..."
+                  value={requirements}
+                  onChangeText={setRequirements}
+                  multiline
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Job Description / Notes</Text>
+                <TextInput
+                  style={[styles.webInput, styles.textArea, { height: 110 }]}
+                  placeholder="Paste the full job description or specific points you want mentioned..."
+                  value={description}
+                  onChangeText={setDescription}
+                  multiline
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+
+              <TouchableOpacity 
+                style={[styles.webPrimaryButton, isGenerating && { backgroundColor: '#1e3a8a' }]}
+                onPress={isGenerating ? () => setShowCountdownPopup(true) : handleGenerateAndApply}
+              >
                 {isGenerating ? (
-                  <View style={styles.generatingStateBox}>
-                    <View style={styles.pulseLoaderCircle}>
-                      <ActivityIndicator size="large" color="#2563eb" />
-                    </View>
-                    <Text style={styles.generatingStateTitle}>
-                      Your email is getting ready in a while...
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
+                    <Text style={styles.webPrimaryButtonText}>
+                      Generating Email... ({formatTime(generationSeconds)}) • Open Popup
                     </Text>
-                    <Text style={styles.generatingStateSub}>
-                      Your n8n AI workflow is crafting a tailored, high-converting pitch from your resume & target job details.
-                    </Text>
-                    <View style={styles.timerBadge}>
-                      <Text style={styles.timerCountdown}>{formatTime(generationSeconds)}</Text>
-                    </View>
-                  </View>
-                ) : generatedResult ? (
-                  <View style={styles.generatedBox}>
-                    <View style={styles.boxHeader}>
-                      <View>
-                        <Text style={styles.boxSub}>Recipient: {generatedResult.recipientEmail || 'None provided'}</Text>
-                        <Text style={styles.boxSub}>Status: <Text style={styles.statusBadgeText}>{generatedResult.status}</Text></Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <TouchableOpacity 
-                          style={styles.actionPill}
-                          onPress={() => handleCopy(generatedResult.generatedEmail)}
-                        >
-                          <Text style={styles.actionPillText}>Copy</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionPill, styles.actionPillPrimary, isSending && styles.disabledButton]}
-                          onPress={() => handleSendEmail(generatedResult)}
-                          disabled={isSending}
-                        >
-                          {isSending ? (
-                            <ActivityIndicator size="small" color="#ffffff" />
-                          ) : (
-                            <Text style={styles.actionPillPrimaryText}>Send</Text>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    <ScrollView style={styles.emailPreviewScroll}>
-                      <Text style={styles.emailPreviewText}>{generatedResult.generatedEmail}</Text>
-                    </ScrollView>
                   </View>
                 ) : (
-                  <View style={styles.emptyPreviewBox}>
-                    <Text style={styles.emptyPreviewMark}>Aa</Text>
-                    <Text style={styles.emptyPreviewTitle}>No application generated yet</Text>
-                    <Text style={styles.emptyPreviewSub}>
-                      Fill in the job requirements on the left and select Generate application. Your customized cover email will appear here.
-                    </Text>
-                  </View>
+                  <Text style={styles.webPrimaryButtonText}>Generate application</Text>
                 )}
-              </View>
+              </TouchableOpacity>
+
+              {(jobTitle || companyName || recipientEmail || requirements || description) && !isGenerating ? (
+                <TouchableOpacity 
+                  style={{ marginTop: 10, alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10 }}
+                  onPress={clearApplicationForm}
+                >
+                  <Text style={{ color: '#6b7280', fontSize: 13, fontWeight: '500' }}>Clear form</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         )}
@@ -2024,6 +2019,55 @@ export default function AppWeb() {
                   <Text style={{ color: '#ef4444', fontWeight: '600', fontSize: 13 }}>Delete Record</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+      {/* Active Generation Countdown Popup Modal */}
+      {showCountdownPopup && (
+        <Modal
+          transparent
+          animationType="fade"
+          visible={showCountdownPopup}
+          onRequestClose={() => setShowCountdownPopup(false)}
+        >
+          <View style={styles.countdownModalOverlay}>
+            <View style={styles.countdownModalCard}>
+              <View style={styles.countdownIconWrapper}>
+                <ActivityIndicator size="large" color="#2563eb" />
+              </View>
+
+              <Text style={styles.countdownModalTitle}>
+                Generating Tailored Email
+              </Text>
+
+              <Text style={styles.countdownModalSubtitle}>
+                Our AI workflow is analyzing your resume and crafting a tailored pitch for{' '}
+                <Text style={{ fontWeight: '700', color: '#17201c' }}>
+                  {companyName || jobTitle || 'this role'}
+                </Text>.
+              </Text>
+
+              <View style={styles.countdownTimerBadge}>
+                <Text style={styles.countdownTimerLabel}>TIME ELAPSED</Text>
+                <Text style={styles.countdownTimerValue}>
+                  {formatTime(generationSeconds)}
+                </Text>
+              </View>
+
+              <View style={styles.countdownStatusRow}>
+                <View style={styles.countdownPulseDot} />
+                <Text style={styles.countdownStatusText}>
+                  n8n workflow active • Polling database for output...
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.countdownDismissBtn}
+                onPress={() => setShowCountdownPopup(false)}
+              >
+                <Text style={styles.countdownDismissBtnText}>Minimize / Run in Background</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -3034,6 +3078,111 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: '#0f172a',
+  },
+  // Countdown Popup Modal Styles
+  countdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  countdownModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 32,
+    width: '100%',
+    maxWidth: 460,
+    alignItems: 'center',
+    textAlign: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.15,
+    shadowRadius: 28,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  countdownIconWrapper: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  countdownModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  countdownModalSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 24,
+    paddingHorizontal: 8,
+  },
+  countdownTimerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    backgroundColor: '#0f172a',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 30,
+    marginBottom: 20,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+  },
+  countdownTimerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94a3b8',
+    letterSpacing: 1.5,
+  },
+  countdownTimerValue: {
+    color: '#38bdf8',
+    fontSize: 26,
+    fontWeight: '800',
+    fontFamily: 'monospace',
+    letterSpacing: 2,
+  },
+  countdownStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 24,
+  },
+  countdownPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10b981',
+  },
+  countdownStatusText: {
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '500',
+  },
+  countdownDismissBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  countdownDismissBtnText: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });
 

@@ -35,6 +35,12 @@ import {
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
+import {
+  initSession,
+  clearSessionTimestamps,
+  checkSessionStatus,
+  setupSessionTracking,
+} from './services/sessionManager';
 export const SAMPLE_HIRING_POST = `[Techies Global](https://www.linkedin.com/company/techies-global/) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁 (𝗣𝗮𝗿𝘁 𝘁𝗶𝗺𝗲 𝗡𝗶𝗴𝗵𝘁 𝗦𝗵𝗶𝗳𝘁 𝟭 𝗮𝗺 𝘁𝗼 𝟱 𝗮𝗺) On-Site𝗞𝗲𝘆 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗶𝗯𝗶𝗹𝗶𝘁𝗶𝗲𝘀 • Research and evaluate emerging AI tools, platforms, and technologies relevant to digital marketing. • Implement AI-powered workflows to improve productivity and reduce repetitive manual tasks. • Develop and optimize prompts for ChatGPT, Claude, Gemini, and other generative AI platforms. • Use AI for content generation, content optimization, research, ideation, and quality improvement. • Assist the marketing team with AI-driven SEO, keyword research, competitor analysis, and content strategies. • Develop AI-based automation workflows using tools such as Make, Zapier, n8n, or similar platforms. • Identify opportunities to automate internal agency processes and client deliverables. • Experiment with AI agents, custom GPTs, chatbots, and AI assistants. • Integrate AI tools with existing marketing and business workflows where appropriate. • Monitor AI-generated content for accuracy, originality, brand alignment, and quality. • Stay updated with the latest developments in generative AI, LLMs, AI automation, and marketing technology. • Train and guide team members on effective use of AI tools. • Maintain documentation of AI workflows, prompts, automations, and best practices. • Support management in identifying new AI-powered services that can be offered to clients.𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱 𝗦𝗸𝗶𝗹𝗹𝘀 & 𝗤𝘂𝗮𝗹𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻𝘀Bachelor's degree in Computer Science, Artificial Intelligence, Software Engineering, IT, Marketing Technology, or a related field is preferred.𝗔𝗽𝗽𝗹𝘆 𝗮𝘁: 𝗺𝗮𝗻𝗮𝗴𝗶𝗻𝗴𝗱𝗶𝗿𝗲𝗰𝘁𝗼𝗿@𝘁𝗲𝗰𝗵𝗶𝗲𝘀𝗴𝗹𝗼𝗯𝗮𝗹.𝗰𝗼𝗺𝗪𝗵𝗮𝘁𝘀𝗮𝗽𝗽: 𝟬𝟯𝟬𝟴 𝟰𝟬𝟭𝟵𝟬𝟱𝟳𝗟𝗼𝗰𝗮𝘁𝗶𝗼𝗻: Wapda Town Phase 1 Lahore.`;
 
 export const parseRawHiringPost = (raw) => {
@@ -147,6 +153,7 @@ export default function App() {
   const [requirements, setRequirements] = useState('');
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showCountdownPopup, setShowCountdownPopup] = useState(false);
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
   const [isSending, setIsSending] = useState(false);
@@ -276,26 +283,76 @@ export default function App() {
     setLastSyncedTime(new Date());
   }, []);
 
-  // Supabase Auth listener
+  const handleSignOut = async () => {
+    await clearSessionTimestamps();
+    await supabase.auth.signOut();
+    setSession(null);
+    setIsAuthenticated(false);
+  };
+
+  // Supabase Auth listener with 4h inactivity and 7d limit enforcement
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setIsAuthenticated(!!session);
-      if (session?.user?.id) {
-        loadUserData(session.user.id, session.user.email);
+    let isSubscribed = true;
+
+    const handleSession = async (currentSession) => {
+      if (!currentSession) {
+        if (isSubscribed) {
+          setSession(null);
+          setIsAuthenticated(false);
+        }
+        await clearSessionTimestamps();
+        return;
       }
+
+      const status = await checkSessionStatus();
+      if (status.expired) {
+        await clearSessionTimestamps();
+        await supabase.auth.signOut();
+        if (isSubscribed) {
+          setSession(null);
+          setIsAuthenticated(false);
+          setAuthError(status.reason);
+        }
+        return;
+      }
+
+      await initSession(currentSession.user?.id);
+      if (isSubscribed) {
+        setSession(currentSession);
+        setIsAuthenticated(true);
+        if (currentSession.user?.id) {
+          loadUserData(currentSession.user.id, currentSession.user.email);
+        }
+      }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleSession(session);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setIsAuthenticated(!!session);
-      if (session?.user?.id) {
-        loadUserData(session.user.id, session.user.email);
-      }
+      handleSession(session);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isSubscribed = false;
+      subscription.unsubscribe();
+    };
   }, [loadUserData]);
+
+  // Active session tracking
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const cleanup = setupSessionTracking((reason) => {
+      setSession(null);
+      setIsAuthenticated(false);
+      setAuthError(reason || 'Your session has expired. Please log in again.');
+      Alert.alert('Session Expired', reason || 'Your session has expired. Please log in again.');
+    });
+
+    return cleanup;
+  }, [isAuthenticated]);
 
   // Realtime Supabase DB Listener: automatically syncs applications & status changes
   useEffect(() => {
@@ -468,13 +525,14 @@ export default function App() {
       console.warn('Initial application save warning:', saveErr.message);
     }
 
-    // 3. Start timer & loader immediately
+    // 3. Start timer, popup & loader immediately
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
 
     setIsGenerating(true);
+    setShowCountdownPopup(true);
     setGenerationSeconds(0);
     setGeneratedResult(null);
 
@@ -542,6 +600,7 @@ export default function App() {
         pollIntervalRef.current = null;
       }
       setIsGenerating(false);
+      setShowCountdownPopup(false);
 
       // 1. Update the record in 'applications' table: status becomes 'Generated'
       if (createdAppId) {
@@ -554,21 +613,20 @@ export default function App() {
 
       // 3. Set generatedResult strictly using the record from the database
       const dbRecord = refreshedList.find(a => a.id === createdAppId);
-      if (dbRecord) {
-        setGeneratedResult(dbRecord);
-      } else {
-        setGeneratedResult({
-          id: createdAppId || Date.now().toString(),
-          jobTitle: jobTitle.trim(),
-          companyName: companyName.trim() || 'Hiring Company',
-          recipientEmail: recipientEmail.trim(),
-          requirements: requirements.trim(),
-          description: description.trim(),
-          generatedEmail: generatedContent,
-          status: 'Generated',
-          createdAt: createdApp?.createdAt || new Date().toISOString(),
-        });
-      }
+      const finalResult = dbRecord || {
+        id: createdAppId || Date.now().toString(),
+        jobTitle: activeJobTitle,
+        companyName: activeCompanyName || 'Hiring Company',
+        recipientEmail: activeRecipientEmail,
+        requirements: activeRequirements,
+        description: activeDescription,
+        generatedEmail: generatedContent,
+        status: 'Generated',
+        createdAt: createdApp?.createdAt || new Date().toISOString(),
+      };
+      setGeneratedResult(finalResult);
+      // Immediately open full details modal
+      setSelectedRecord(finalResult);
     };
 
     pollIntervalRef.current = setInterval(async () => {
@@ -609,6 +667,7 @@ export default function App() {
           pollIntervalRef.current = null;
         }
         setIsGenerating(false);
+        setShowCountdownPopup(false);
         Alert.alert(
           'Generation Timeout',
           'Email generation timed out waiting for output in application_emails table. Your application details are already saved in Applications history.'
@@ -950,7 +1009,7 @@ export default function App() {
               : (session?.user?.email || 'User')}
           </Text>
         </View>
-        <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.signOutBtn}>
+        <TouchableOpacity onPress={handleSignOut} style={styles.signOutBtn}>
           <Text style={styles.signOutBtnText}>Log Out</Text>
         </TouchableOpacity>
       </View>
@@ -1108,15 +1167,14 @@ export default function App() {
               />
 
               <TouchableOpacity 
-                style={[styles.primaryBtn, isGenerating && styles.disabledBtn]}
-                onPress={handleGenerateAndApply}
-                disabled={isGenerating}
+                style={[styles.primaryBtn, isGenerating && { backgroundColor: '#1d4ed8' }]}
+                onPress={isGenerating ? () => setShowCountdownPopup(true) : handleGenerateAndApply}
               >
                 {isGenerating ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
                     <Text style={styles.primaryBtnText}>
-                      Generating Email... ({formatTime(generationSeconds)})
+                      Generating Email... ({formatTime(generationSeconds)}) • Open Popup
                     </Text>
                   </View>
                 ) : (
@@ -1133,50 +1191,6 @@ export default function App() {
                 </TouchableOpacity>
               ) : null}
             </View>
-
-            {/* Active n8n Generating Loader Card */}
-            {isGenerating && (
-              <View style={[styles.card, { alignItems: 'center', paddingVertical: 36, borderWidth: 2, borderColor: '#93c5fd', borderStyle: 'dashed' }]}>
-                <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#bfdbfe' }}>
-                  <ActivityIndicator size="large" color="#2563eb" />
-                </View>
-                <Text style={{ fontSize: 18, fontWeight: '700', color: '#1e293b', textAlign: 'center', marginBottom: 6 }}>
-                  Your email is getting ready in a while...
-                </Text>
-                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', paddingHorizontal: 20, marginBottom: 18, lineHeight: 19 }}>
-                  Your n8n AI workflow is crafting your tailored pitch.
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 24 }}>
-                  <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: '800', fontFamily: 'monospace', letterSpacing: 2 }}>
-                    {formatTime(generationSeconds)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {/* Generated Result Card */}
-            {generatedResult && !isGenerating && (
-              <View style={styles.card}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <Text style={styles.cardTitle}>2. Generated Application</Text>
-                  <TouchableOpacity 
-                    style={[styles.sendActionBtn, isSending && { opacity: 0.6 }]}
-                    onPress={() => handleSendEmail(generatedResult)}
-                    disabled={isSending}
-                  >
-                    {isSending ? (
-                      <ActivityIndicator size="small" color="#ffffff" />
-                    ) : (
-                      <Text style={styles.sendActionBtnText}>Send email</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.previewBox}>
-                  <Text style={styles.previewText}>{generatedResult.generatedEmail}</Text>
-                </View>
-              </View>
-            )}
           </View>
         )}
 
@@ -1699,6 +1713,51 @@ export default function App() {
                   <Text style={styles.outlineBtnText}>Close</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+      {/* Active Generation Countdown Popup Modal */}
+      {showCountdownPopup && (
+        <Modal
+          transparent
+          animationType="fade"
+          visible={showCountdownPopup}
+          onRequestClose={() => setShowCountdownPopup(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.65)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: '#ffffff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 380, alignItems: 'center' }}>
+              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
+                <ActivityIndicator size="large" color="#2563eb" />
+              </View>
+
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 6, textAlign: 'center' }}>
+                Generating Tailored Email
+              </Text>
+
+              <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 19, marginBottom: 20, paddingHorizontal: 6 }}>
+                Our AI workflow is analyzing your resume and crafting a tailored pitch.
+              </Text>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#0f172a', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 24, marginBottom: 16 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#94a3b8', letterSpacing: 1 }}>TIME</Text>
+                <Text style={{ color: '#38bdf8', fontSize: 22, fontWeight: '800', fontFamily: 'monospace', letterSpacing: 2 }}>
+                  {formatTime(generationSeconds)}
+                </Text>
+              </View>
+
+              <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500', marginBottom: 20 }}>
+                n8n workflow active • Polling response...
+              </Text>
+
+              <TouchableOpacity
+                style={{ paddingVertical: 8, paddingHorizontal: 16 }}
+                onPress={() => setShowCountdownPopup(false)}
+              >
+                <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600', textDecorationLine: 'underline' }}>
+                  Minimize / Run in Background
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
