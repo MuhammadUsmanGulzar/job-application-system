@@ -525,6 +525,7 @@ export async function tailorResumeForJob({
   description = '',
   rawResume = '',
   resumeName = '',
+  atsReport = null,
 }) {
   // 1. First attempt LangGraph Python backend agent
   try {
@@ -540,6 +541,7 @@ export async function tailorResumeForJob({
         raw_resume: rawResume,
         resume_name: resumeName,
         save_to_db: Boolean(userId),
+        ats_report: atsReport || {},
       }),
     });
 
@@ -594,11 +596,16 @@ Bachelor of Science in Computer Science`;
   ];
 
   const fullReqText = `${jobTitle} ${companyName} ${requirements} ${description}`.toLowerCase();
-  const matched = techKeywords.filter((kw) => fullReqText.includes(kw.toLowerCase()));
-  const topSkills = matched.length > 0 ? matched : ['Python', 'Software Engineering', 'AI Integrations', 'Problem Solving'];
+  const jobSkills = techKeywords.filter((kw) => fullReqText.includes(kw.toLowerCase()));
+  const matched = jobSkills.filter((kw) => baseResume.toLowerCase().includes(kw.toLowerCase()));
+  const missing = jobSkills.filter((kw) => !baseResume.toLowerCase().includes(kw.toLowerCase()));
+  const reportMatches = atsReport?.matchedSkills || [];
+  const topSkills = [...new Set([...matched, ...reportMatches])].slice(0, 10);
   const topSkillsStr = topSkills.slice(0, 10).join(', ');
 
-  const tailoredSummary = `Results-oriented ${jobTitle} with proven proficiency in ${topSkillsStr}. Demonstrated track record of delivering high-quality engineering solutions, optimizing workflows, and adapting rapidly to new technology stacks. Excited to bring hands-on expertise, technical agility, and collaborative drive to ${companyName || 'your team'}.`;
+  const tailoredSummary = topSkills.length
+    ? `Results-oriented ${jobTitle} with demonstrated experience in ${topSkillsStr}. Proven track record of delivering high-quality solutions, improving workflows, and collaborating across teams. Prepared to bring this relevant experience to ${companyName || 'the hiring team'}.`
+    : `Results-oriented professional targeting the ${jobTitle} opportunity at ${companyName || 'the hiring organization'}. Proven record of delivering high-quality solutions, improving workflows, and collaborating across teams.`;
 
   const newFileName = `Resume_Tailored_${jobTitle.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 25)}.txt`;
 
@@ -615,7 +622,7 @@ ${tailoredSummary}
 ═══════════════════════════════════════════════════════════════════
 CORE COMPETENCIES & MATCHED REQUIREMENTS
 ═══════════════════════════════════════════════════════════════════
-• Key Technologies: ${topSkillsStr}
+• Verified Target Skills: ${topSkillsStr || 'See experience and projects below'}
 • Focus Areas: System Reliability, Automation Workflows, Clean Code & API Design
 
 ═══════════════════════════════════════════════════════════════════
@@ -636,6 +643,7 @@ ${baseResume}
     tailoredResume,
     resumeName: newFileName,
     matchedSkills: topSkills,
+    missingSkills: missing,
     enhancements: [
       `Headline and target title tailored specifically for "${jobTitle}"`,
       `Executive summary generated and optimized for ${companyName || 'the target role'}`,
@@ -679,6 +687,13 @@ export function mapApplicationRow(row) {
     recipientEmail: row.recipient_email || '',
     requirements: row.requirements || '',
     description: row.description || '',
+    atsScore: row.ats_score ?? null,
+    atsReport: row.ats_report || null,
+    tailoredAtsScore: row.tailored_ats_score ?? null,
+    tailoredAtsReport: row.tailored_ats_report || null,
+    resumeSnapshot: row.resume_snapshot || '',
+    tailoredResumeContent: row.tailored_resume_content || '',
+    atsAnalyzedAt: row.ats_analyzed_at || null,
     generatedEmail: emailContent,
     status: hasEmail && row.status === 'Generating' ? 'Generated' : (row.status || 'Generating'),
     resumeId: row.resume_id || null,
@@ -722,18 +737,33 @@ export function deduplicateApplicationList(apps) {
 
       const mergedEmail = app.generatedEmail?.trim() || existing.generatedEmail?.trim() || '';
       const mergedAppliedAt = app.appliedAt || existing.appliedAt || null;
+      const atsSource = app.tailoredAtsReport
+        ? app
+        : existing.tailoredAtsReport
+          ? existing
+          : app.atsReport
+            ? app
+            : existing;
 
       if (preferCurrent) {
         map.set(groupKey, {
           ...app,
           generatedEmail: mergedEmail,
           appliedAt: mergedAppliedAt,
+          atsScore: atsSource.atsScore,
+          atsReport: atsSource.atsReport,
+          tailoredAtsScore: atsSource.tailoredAtsScore,
+          tailoredAtsReport: atsSource.tailoredAtsReport,
         });
       } else {
         map.set(groupKey, {
           ...existing,
           generatedEmail: mergedEmail,
           appliedAt: mergedAppliedAt,
+          atsScore: atsSource.atsScore,
+          atsReport: atsSource.atsReport,
+          tailoredAtsScore: atsSource.tailoredAtsScore,
+          tailoredAtsReport: atsSource.tailoredAtsReport,
         });
       }
     }
@@ -791,6 +821,7 @@ export async function createApplication(userId, formDetails) {
   const recipientEmail = formDetails.recipientEmail?.trim() || null;
   const requirements = formDetails.requirements?.trim() || null;
   const description = formDetails.description?.trim() || null;
+  const initialStatus = formDetails.status || 'Generating';
 
   // 1. Deduplication check: if a record for this same user, role & company exists within 15 minutes, reuse it!
   if (userId) {
@@ -823,7 +854,7 @@ export async function createApplication(userId, formDetails) {
     recipient_email: recipientEmail,
     requirements: requirements,
     description: description,
-    status: 'Generating',
+    status: initialStatus,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -863,7 +894,7 @@ export async function createApplication(userId, formDetails) {
       requirements: formDetails.requirements?.trim() || '',
       description: formDetails.description?.trim() || '',
       generatedEmail: '',
-      status: 'Generating',
+      status: initialStatus,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

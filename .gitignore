@@ -26,6 +26,10 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
+# Python agent caches
+__pycache__/
+*.py[cod]
+
 # macOS
 .DS_Store
 *.pem

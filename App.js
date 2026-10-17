@@ -49,6 +49,8 @@ import {
   setupSessionTracking,
 } from './services/sessionManager';
 import CustomAlertModal from './components/CustomAlertModal';
+import AtsDashboard from './components/AtsDashboard';
+import { analyzeResumeForJob } from './services/ats';
 
 export const SAMPLE_HIRING_POST = `[Techies Global](https://www.linkedin.com/company/techies-global/) Lahore is looking for 𝗔𝗜 𝗘𝘅𝗽𝗲𝗿𝘁 (𝗣𝗮𝗿𝘁 𝘁𝗶𝗺𝗲 𝗡𝗶𝗴𝗵𝘁 𝗦𝗵𝗶𝗳𝘁 𝟭 𝗮𝗺 𝘁𝗼 𝟱 𝗮𝗺) On-Site𝗞𝗲𝘆 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗶𝗯𝗶𝗹𝗶𝘁𝗶𝗲𝘀 • Research and evaluate emerging AI tools, platforms, and technologies relevant to digital marketing. • Implement AI-powered workflows to improve productivity and reduce repetitive manual tasks. • Develop and optimize prompts for ChatGPT, Claude, Gemini, and other generative AI platforms. • Use AI for content generation, content optimization, research, ideation, and quality improvement. • Assist the marketing team with AI-driven SEO, keyword research, competitor analysis, and content strategies. • Develop AI-based automation workflows using tools such as Make, Zapier, n8n, or similar platforms. • Identify opportunities to automate internal agency processes and client deliverables. • Experiment with AI agents, custom GPTs, chatbots, and AI assistants. • Integrate AI tools with existing marketing and business workflows where appropriate. • Monitor AI-generated content for accuracy, originality, brand alignment, and quality. • Stay updated with the latest developments in generative AI, LLMs, AI automation, and marketing technology. • Train and guide team members on effective use of AI tools. • Maintain documentation of AI workflows, prompts, automations, and best practices. • Support management in identifying new AI-powered services that can be offered to clients.𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱 𝗦𝗸𝗶𝗹𝗹𝘀 & 𝗤𝘂𝗮𝗹𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻𝘀Bachelor's degree in Computer Science, Artificial Intelligence, Software Engineering, IT, Marketing Technology, or a related field is preferred.𝗔𝗽𝗽𝗹𝘆 𝗮𝘁: 𝗺𝗮𝗻𝗮𝗴𝗶𝗻𝗴𝗱𝗶𝗿𝗲𝗰𝘁𝗼𝗿@𝘁𝗲𝗰𝗵𝗶𝗲𝘀𝗴𝗹𝗼𝗯𝗮𝗹.𝗰𝗼𝗺𝗪𝗵𝗮𝘁𝘀𝗮𝗽𝗽: 𝟬𝟯𝟬𝟴 𝟰𝟬𝟭𝟵𝟬𝟱𝟳𝗟𝗼𝗰𝗮𝘁𝗶𝗼𝗻: Wapda Town Phase 1 Lahore.`;
 
@@ -303,6 +305,10 @@ export default function App() {
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
   const [isSending, setIsSending] = useState(false);
+  const [isAnalyzingAts, setIsAnalyzingAts] = useState(false);
+  const [atsReport, setAtsReport] = useState(null);
+  const [atsBaselineReport, setAtsBaselineReport] = useState(null);
+  const [atsApplicationId, setAtsApplicationId] = useState('');
   const pollIntervalRef = useRef(null);
 
   // Resume Viewer & AI Tailor Agent State
@@ -356,6 +362,9 @@ export default function App() {
     setDescription('');
     setParsedSummary(null);
     setRawPostMessage('');
+    setAtsReport(null);
+    setAtsBaselineReport(null);
+    setAtsApplicationId('');
   };
 
   const handleLoadSamplePost = () => {
@@ -427,7 +436,7 @@ export default function App() {
           setShowCountdownPopup(true);
           return;
         }
-        await handleGenerateAndApply(extracted);
+        await handleAnalyzeResumeMatch(extracted);
         return;
       }
     }
@@ -697,6 +706,111 @@ export default function App() {
     }
   };
 
+  const handleAnalyzeResumeMatch = async (overrideFields = null, options = {}) => {
+    if (isAnalyzingAts) return null;
+    const targetTitle = (overrideFields?.jobTitle || jobTitle || '').trim();
+    const targetCompany = (overrideFields?.companyName || companyName || '').trim();
+    const targetEmail = (overrideFields?.recipientEmail || recipientEmail || '').trim();
+    const targetRequirements = (overrideFields?.requirements || requirements || '').trim();
+    const targetDescription = (overrideFields?.description || description || '').trim();
+    const resumeContent = options.resumeContent ?? settings.resumeContent ?? '';
+    const resumeName = options.resumeName ?? settings.resumeName ?? 'Resume.txt';
+    const stage = options.stage || 'before';
+
+    if (!targetTitle || (!targetRequirements && !targetDescription)) {
+      showError('Add a job title and requirements or description before running ATS analysis.', 'Job Details Needed');
+      return null;
+    }
+    if (!resumeContent.trim()) {
+      showError('Upload or add your resume content before running ATS analysis.', 'Resume Needed');
+      return null;
+    }
+
+    setIsAnalyzingAts(true);
+    try {
+      const userId = session?.user?.id;
+      let applicationId = options.applicationId || atsApplicationId;
+      if (!applicationId) {
+        const created = await createApplication(userId, {
+          jobTitle: targetTitle,
+          companyName: targetCompany,
+          recipientEmail: targetEmail,
+          requirements: targetRequirements,
+          description: targetDescription,
+          status: 'Draft',
+        });
+        applicationId = created.id;
+        setAtsApplicationId(applicationId);
+        if (created.application) {
+          setApplications((current) => [created.application, ...current.filter((item) => item.id !== applicationId)]);
+        }
+      }
+
+      const report = await analyzeResumeForJob({
+        userId,
+        applicationId,
+        jobTitle: targetTitle,
+        companyName: targetCompany,
+        requirements: targetRequirements,
+        description: targetDescription,
+        resumeContent,
+        resumeName,
+        stage,
+      });
+      setAtsReport(report);
+      if (stage === 'before') setAtsBaselineReport(report);
+      setApplications((current) => current.map((item) => item.id === applicationId
+        ? {
+            ...item,
+            atsScore: stage === 'before' ? report.score : item.atsScore,
+            atsReport: stage === 'before' ? report : item.atsReport,
+            tailoredAtsScore: stage === 'after' ? report.score : item.tailoredAtsScore,
+            tailoredAtsReport: stage === 'after' ? report : item.tailoredAtsReport,
+          }
+        : item));
+      return { report, applicationId };
+    } catch (error) {
+      showError(`ATS analysis failed: ${error.message}`, 'Analysis Error');
+      return null;
+    } finally {
+      setIsAnalyzingAts(false);
+    }
+  };
+
+  const handleAgentOptimizeResume = async () => {
+    if (isTailoringResume || isAnalyzingAts || !atsReport) return;
+    setIsTailoringResume(true);
+    try {
+      const result = await tailorResumeForJob({
+        userId: session?.user?.id,
+        jobTitle: jobTitle.trim() || 'Software Engineer',
+        companyName: companyName.trim(),
+        requirements: requirements.trim(),
+        description: description.trim(),
+        rawResume: settings.resumeContent || '',
+        resumeName: settings.resumeName || 'Resume.txt',
+        atsReport: atsBaselineReport || atsReport,
+      });
+      if (!result.success || !result.tailoredResume) throw new Error('No updated resume was returned.');
+
+      const updated = { ...settings, resumeName: result.resumeName, resumeContent: result.tailoredResume };
+      setSettings(updated);
+      setResumeEditText(result.tailoredResume);
+      setResumeTailorResult(result);
+      const analyzed = await handleAnalyzeResumeMatch(null, {
+        applicationId: atsApplicationId,
+        resumeContent: result.tailoredResume,
+        resumeName: result.resumeName,
+        stage: 'after',
+      });
+      if (analyzed?.report) showSuccess(`Resume optimized and re-scored at ${analyzed.report.score}% ATS match.`, 'Optimization Complete');
+    } catch (error) {
+      showError(`Resume optimization failed: ${error.message}`, 'Optimization Error');
+    } finally {
+      setIsTailoringResume(false);
+    }
+  };
+
   // AI Resume Tailor Action: Tailors resume based on job title, company & requirements
   const handleTailorResumeForCurrentJob = async () => {
     if (isTailoringResume) return;
@@ -720,6 +834,7 @@ export default function App() {
         description: targetDesc,
         rawResume: settings.resumeContent || '',
         resumeName: settings.resumeName || 'Resume.txt',
+        atsReport: atsReport || null,
       });
 
       if (result.success && result.tailoredResume) {
@@ -752,7 +867,20 @@ export default function App() {
       const updated = await updateResumeContent(session?.user?.id, resumeEditText, settings.resumeName);
       setSettings(updated);
       setResumeViewMode('preview');
-      showSuccess('Resume updated and saved to your profile!', 'Saved');
+      if (atsApplicationId && jobTitle.trim()) {
+        const analyzed = await handleAnalyzeResumeMatch(null, {
+          applicationId: atsApplicationId,
+          resumeContent: resumeEditText,
+          resumeName: updated.resumeName,
+          stage: 'after',
+        });
+        showSuccess(
+          analyzed?.report ? `Resume saved and re-scored at ${analyzed.report.score}% ATS match.` : 'Resume updated and saved to your profile!',
+          'Saved'
+        );
+      } else {
+        showSuccess('Resume updated and saved to your profile!', 'Saved');
+      }
     } catch (err) {
       showError('Failed to save resume: ' + err.message, 'Save Error');
     } finally {
@@ -873,6 +1001,10 @@ export default function App() {
       });
       createdApp = result.application;
       createdAppId = result.id;
+      setAtsApplicationId(createdAppId);
+      if (createdApp?.status === 'Draft') {
+        await updateApplicationStatus(userId, createdAppId, 'Generating');
+      }
 
       // Instantly refresh applications state so it appears in history right away
       const refreshedList = await getApplications(userId);
@@ -911,6 +1043,12 @@ export default function App() {
       recipient_email: activeRecipientEmail,
       requirements: activeRequirements,
       description: activeDescription,
+      atsScore: atsReport?.score ?? null,
+      ats_score: atsReport?.score ?? null,
+      atsReport: atsReport || null,
+      ats_report: atsReport || null,
+      resumeName: settings.resumeName || '',
+      resume_name: settings.resumeName || '',
     };
 
     let directWebhookContent = '';
@@ -1251,7 +1389,37 @@ export default function App() {
   };
 
   const handleOpenRecord = async (item) => {
-    setSelectedRecord({ ...item, isLoadingEmail: true });
+    const needsAts = !item.atsReport && !item.tailoredAtsReport;
+    const needsEmail = !item.generatedEmail;
+    setSelectedRecord({ ...item, isLoadingEmail: needsEmail, isLoadingAts: needsAts });
+
+    if (needsAts && settings.resumeContent) {
+      try {
+        const report = await analyzeResumeForJob({
+          userId: session?.user?.id,
+          applicationId: item.id,
+          jobTitle: item.jobTitle,
+          companyName: item.companyName,
+          requirements: item.requirements,
+          description: item.description,
+          resumeContent: settings.resumeContent,
+          resumeName: settings.resumeName,
+          stage: 'before',
+        });
+        const analyzedItem = { ...item, atsScore: report.score, atsReport: report };
+        setApplications((current) => current.map((record) => record.id === item.id ? analyzedItem : record));
+        setSelectedRecord((current) => current?.id === item.id
+          ? { ...current, atsScore: report.score, atsReport: report, isLoadingAts: false }
+          : current);
+      } catch (error) {
+        console.warn('ATS analysis on application view failed:', error);
+        setSelectedRecord((current) => current?.id === item.id ? { ...current, isLoadingAts: false } : current);
+      }
+    } else if (needsAts) {
+      setSelectedRecord((current) => current?.id === item.id ? { ...current, isLoadingAts: false } : current);
+    }
+
+    if (!needsEmail) return;
     try {
       const emailRecord = await fetchLatestApplicationEmail(session?.user?.id, null, item.id);
       if (emailRecord && emailRecord.fullEmail) {
@@ -1589,7 +1757,7 @@ export default function App() {
                   onPress={() => handleParseAndPopulate(true)}
                   disabled={isParsingRawPost || isGenerating}
                 >
-                  <Text style={styles.mobileAiBtnText}>Auto-fill and send</Text>
+                  <Text style={styles.mobileAiBtnText}>Auto-fill and analyze</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1698,9 +1866,10 @@ export default function App() {
                 </View>
               </View>
 
-              <TouchableOpacity 
-                style={[styles.primaryBtn, isGenerating && { backgroundColor: '#1d4ed8' }]}
-                onPress={isGenerating ? () => setShowCountdownPopup(true) : handleGenerateAndApply}
+              <TouchableOpacity
+                style={[styles.primaryBtn, (isGenerating || isAnalyzingAts) && styles.disabledButton]}
+                onPress={isGenerating ? () => setShowCountdownPopup(true) : () => handleAnalyzeResumeMatch()}
+                disabled={isAnalyzingAts}
               >
                 {isGenerating ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1709,8 +1878,13 @@ export default function App() {
                       Generating Email... ({formatTime(generationSeconds)}) • Open Popup
                     </Text>
                   </View>
+                ) : isAnalyzingAts ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryBtnText}>Analyzing resume match...</Text>
+                  </View>
                 ) : (
-                  <Text style={styles.primaryBtnText}>Generate application</Text>
+                  <Text style={styles.primaryBtnText}>{atsReport ? 'Refresh ATS analysis' : 'Analyze resume match'}</Text>
                 )}
               </TouchableOpacity>
 
@@ -1723,6 +1897,23 @@ export default function App() {
                 </TouchableOpacity>
               ) : null}
             </View>
+
+            {atsReport ? (
+              <AtsDashboard
+                compact
+                report={atsReport}
+                previousScore={atsReport.stage === 'after' ? atsBaselineReport?.score ?? null : null}
+                isOptimizing={isTailoringResume || isAnalyzingAts}
+                isGenerating={isGenerating}
+                onEditResume={() => {
+                  setResumeEditText(settings.resumeContent || '');
+                  setResumeViewMode('edit');
+                  setActiveTab('resume');
+                }}
+                onOptimizeResume={handleAgentOptimizeResume}
+                onGenerateEmail={() => handleGenerateAndApply()}
+              />
+            ) : null}
           </View>
         )}
 
@@ -1910,6 +2101,11 @@ export default function App() {
                       <Text style={styles.itemTitle}>{item.jobTitle}</Text>
                       <Text style={styles.itemCompany}>{item.companyName} • {item.recipientEmail || 'No email'}</Text>
                       <Text style={styles.itemDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+                      {(item.tailoredAtsScore ?? item.atsScore) !== null ? (
+                        <Text style={{ color: '#28543f', fontSize: 12, fontWeight: '800', marginTop: 6 }}>
+                          {item.tailoredAtsScore ?? item.atsScore}% ATS match
+                        </Text>
+                      ) : null}
                     </View>
                     <View style={[styles.statusBadge, item.status === 'Applied' ? styles.statusApplied : styles.statusDraft]}>
                       <Text style={[styles.statusBadgeText, item.status === 'Applied' ? styles.statusAppliedText : styles.statusDraftText]}>
@@ -1923,7 +2119,7 @@ export default function App() {
                       style={styles.outlineBtn}
                       onPress={() => handleOpenRecord(item)}
                     >
-                      <Text style={styles.outlineBtnText}>View Pitch</Text>
+                      <Text style={styles.outlineBtnText}>View details</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity 
@@ -2267,7 +2463,7 @@ export default function App() {
                     {isTailoringResume ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Text style={styles.resumeActionButtonText}>✨ Tailor for {jobTitle ? `"${jobTitle}"` : 'Job'}</Text>
+                      <Text style={styles.resumeActionButtonText}>Tailor for {jobTitle ? `"${jobTitle}"` : 'job'}</Text>
                     )}
                   </TouchableOpacity>
 
@@ -2508,7 +2704,7 @@ export default function App() {
                           style={[styles.resumeActionButton, { backgroundColor: '#10b981' }]}
                           onPress={handleTailorResumeForCurrentJob}
                         >
-                          <Text style={styles.resumeActionButtonText}>✨ Generate Baseline</Text>
+                          <Text style={styles.resumeActionButtonText}>Generate baseline</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2587,7 +2783,20 @@ export default function App() {
                     ))}
                   </View>
 
-                  <ScrollView style={{ maxHeight: 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
+                  {selectedRecord.isLoadingAts ? (
+                    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#416353" style={{ marginBottom: 8 }} />
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>Analyzing resume match...</Text>
+                    </View>
+                  ) : (selectedRecord.tailoredAtsReport || selectedRecord.atsReport) ? (
+                    <AtsDashboard
+                      compact
+                      report={selectedRecord.tailoredAtsReport || selectedRecord.atsReport}
+                      previousScore={selectedRecord.tailoredAtsReport ? selectedRecord.atsScore : null}
+                    />
+                  ) : null}
+
+                  <ScrollView style={{ maxHeight: (selectedRecord.atsReport || selectedRecord.tailoredAtsReport) ? 170 : 300, backgroundColor: '#f8fafc', padding: 12, borderRadius: 8 }}>
                     {selectedRecord.isLoadingEmail ? (
                       <View style={{ paddingVertical: 30, alignItems: 'center' }}>
                         <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
