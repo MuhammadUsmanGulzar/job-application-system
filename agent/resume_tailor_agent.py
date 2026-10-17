@@ -577,9 +577,92 @@ CRITICAL RULES:
     }
 
 
+def generate_pdf_bytes_from_text(resume_text: str) -> bytes:
+    """
+    Builds a clean, standard ATS-friendly PDF document from resume text using ReportLab.
+    """
+    import io
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    page_width, page_height = letter
+    margin = 50
+    max_width = page_width - (margin * 2)
+    y = page_height - margin
+    line_height = 14
+
+    lines = (resume_text or "").split("\n")
+    for i, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            y -= line_height * 0.7
+            if y < margin + 20:
+                p.showPage()
+                y = page_height - margin
+            continue
+
+        is_heading = (
+            any(line.upper().startswith(h) for h in [
+                "PROFESSIONAL SUMMARY", "SUMMARY", "EXPERIENCE", "WORK EXPERIENCE",
+                "EDUCATION", "SKILLS", "TECHNICAL SKILLS", "PROJECTS", "CORE COMPETENCIES"
+            ])
+            or (line == line.upper() and len(line) < 40 and ":" not in line and not line.startswith("•"))
+        )
+        is_name = (i == 0)
+
+        font_name = "Helvetica-Bold" if (is_name or is_heading) else "Helvetica"
+        font_size = 16 if is_name else (12 if is_heading else 9.5)
+        p.setFont(font_name, font_size)
+
+        if is_name:
+            p.setFillColorRGB(0.08, 0.12, 0.2)
+            y -= 2
+        elif is_heading:
+            p.setFillColorRGB(0.08, 0.14, 0.25)
+            y -= 4
+        else:
+            p.setFillColorRGB(0.15, 0.18, 0.25)
+
+        # Word wrap
+        words = line.split(" ")
+        curr = ""
+        for w in words:
+            test = f"{curr} {w}".strip()
+            if p.stringWidth(test, font_name, font_size) > max_width and curr:
+                if y < margin + 15:
+                    p.showPage()
+                    p.setFont(font_name, font_size)
+                    y = page_height - margin
+                p.drawString(margin, y, curr)
+                y -= line_height
+                curr = w
+            else:
+                curr = test
+
+        if curr:
+            if y < margin + 15:
+                p.showPage()
+                p.setFont(font_name, font_size)
+                y = page_height - margin
+            p.drawString(margin, y, curr)
+            y -= (line_height + 2 if is_heading else line_height)
+
+            if is_heading:
+                p.setStrokeColorRGB(0.82, 0.85, 0.9)
+                p.setLineWidth(0.75)
+                p.line(margin, y + 4, page_width - margin, y + 4)
+                y -= 3
+
+    p.showPage()
+    p.save()
+    return buffer.getvalue()
+
+
 def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
     """
-    Node 4: Persists the tailored resume back to Supabase database (user_settings & resumes table).
+    Node 4: Persists the tailored resume back to Supabase database & storage bucket as an ATS PDF document.
     """
     logs = list(state.get("logs", []))
     save_to_db = state.get("save_to_db", True)
@@ -594,7 +677,7 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
     try:
         supabase = get_supabase_client()
         clean_title = re.sub(r"[^A-Za-z0-9_-]", "_", job_title)[:25]
-        file_name = f"Resume_Tailored_{clean_title}.txt"
+        file_name = f"Resume_Tailored_{clean_title}.pdf"
 
         logs.append(f"Persisting tailored resume '{file_name}' to Supabase for user {user_id}...")
 
@@ -619,12 +702,20 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
 
         logs.append("Recorded tailored resume into public.resumes table.")
 
-        # 3. Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}'
+        # 3. Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}' as PDF
         try:
+            try:
+                pdf_payload = generate_pdf_bytes_from_text(tailored)
+                content_type = "application/pdf"
+            except Exception as pdf_gen_err:
+                logs.append(f"ReportLab PDF notice ({pdf_gen_err}), saving raw text payload.")
+                pdf_payload = tailored.encode("utf-8")
+                content_type = "text/plain;charset=utf-8"
+
             supabase.storage.from_("resumes").upload(
                 f"{user_id}/{file_name}",
-                tailored.encode("utf-8"),
-                {"upsert": "true", "content-type": "text/plain;charset=utf-8"}
+                pdf_payload,
+                {"upsert": "true", "content-type": content_type}
             )
             logs.append(f"Successfully uploaded tailored resume to Supabase storage bucket 'resumes/{user_id}/{file_name}'.")
         except Exception as st_err:

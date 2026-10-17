@@ -339,9 +339,9 @@ export default function AppWeb() {
     if (pickedResumeSource === 'tailored' && tailoredResumeContent) {
       return {
         source: 'tailored',
-        name: tailoredResumeName || 'Resume_Tailored_ATS.txt',
+        name: tailoredResumeName || 'Resume_Tailored_ATS.pdf',
         content: tailoredResumeContent,
-        bucketPath: tailoredResumeBucketPath || (session?.user?.id ? `resumes/${session.user.id}/${tailoredResumeName || 'Resume_Tailored_ATS.txt'}` : `resumes/${tailoredResumeName || 'Resume_Tailored_ATS.txt'}`),
+        bucketPath: tailoredResumeBucketPath || (session?.user?.id ? `resumes/${session.user.id}/${tailoredResumeName || 'Resume_Tailored_ATS.pdf'}` : `resumes/${tailoredResumeName || 'Resume_Tailored_ATS.pdf'}`),
         isAtsOptimized: true,
       };
     }

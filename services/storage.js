@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { supabase } from '../supabase';
 import { performLlmResumeOptimization } from './ai.js';
 
@@ -235,25 +236,142 @@ export async function saveSettings(userId, settings) {
 // RESUME STORAGE BUCKET (Isolated folder per user: resumes/{user_id}/{filename})
 // --------------------------------------------------------
 
+/**
+ * Builds a clean, professional ATS-friendly PDF document from resume text.
+ * Uses standard Letter page size, 48pt margins, clean hierarchy, and word wrap.
+ */
+export async function generatePdfFromResumeText(resumeText) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageWidth = 612;
+  const pageHeight = 792;
+  const margin = 48;
+  const maxWidth = pageWidth - margin * 2;
+  const fontSize = 9.5;
+  const headingSize = 12;
+  const titleSize = 16;
+  const lineHeight = 13.5;
+
+  let page = pdfDoc.addPage([pageWidth, pageHeight]);
+  let y = pageHeight - margin;
+
+  const lines = (resumeText || '').split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      y -= lineHeight * 0.6;
+      if (y < margin + 20) {
+        page = pdfDoc.addPage([pageWidth, pageHeight]);
+        y = pageHeight - margin;
+      }
+      continue;
+    }
+
+    const isSectionHeading = /^(PROFESSIONAL SUMMARY|SUMMARY|EXPERIENCE|WORK EXPERIENCE|PROFESSIONAL EXPERIENCE|EDUCATION|SKILLS|TECHNICAL SKILLS|PROJECTS|CERTIFICATIONS|KEY COMPETENCIES|CORE COMPETENCIES|ACHIEVEMENTS)\b/i.test(trimmed) || 
+      (trimmed === trimmed.toUpperCase() && trimmed.length < 40 && !trimmed.includes(':') && !trimmed.startsWith('•'));
+    
+    const isName = (i === 0);
+
+    let activeFont = font;
+    let size = fontSize;
+    let color = rgb(0.12, 0.16, 0.22);
+
+    if (isName) {
+      activeFont = fontBold;
+      size = titleSize;
+      color = rgb(0.06, 0.09, 0.16);
+      y -= 2;
+    } else if (isSectionHeading) {
+      activeFont = fontBold;
+      size = headingSize;
+      color = rgb(0.08, 0.14, 0.25);
+      y -= 6;
+    }
+
+    const words = trimmed.split(' ');
+    let currentLine = '';
+
+    for (let w = 0; w < words.length; w++) {
+      const word = words[w];
+      const testLine = currentLine ? currentLine + ' ' + word : word;
+      const textWidth = activeFont.widthOfTextAtSize(testLine, size);
+
+      if (textWidth > maxWidth && currentLine) {
+        if (y < margin + 15) {
+          page = pdfDoc.addPage([pageWidth, pageHeight]);
+          y = pageHeight - margin;
+        }
+        page.drawText(currentLine, { x: margin, y, size, font: activeFont, color });
+        y -= lineHeight;
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+
+    if (currentLine) {
+      if (y < margin + 15) {
+        page = pdfDoc.addPage([pageWidth, pageHeight]);
+        y = pageHeight - margin;
+      }
+      page.drawText(currentLine, { x: margin, y, size, font: activeFont, color });
+      y -= (isSectionHeading ? lineHeight + 3 : lineHeight);
+
+      if (isSectionHeading) {
+        page.drawLine({
+          start: { x: margin, y: y + 4 },
+          end: { x: pageWidth - margin, y: y + 4 },
+          thickness: 0.75,
+          color: rgb(0.82, 0.85, 0.9),
+        });
+        y -= 3;
+      }
+    }
+  }
+
+  const pdfBytes = await pdfDoc.save();
+  return pdfBytes;
+}
+
 export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, desiredFileName = '') {
   if (!userId || !tailoredResumeText) return null;
 
-  const fileName = desiredFileName || `Resume_Tailored_${Date.now()}.txt`;
+  // Always save as a standard PDF file in the user's bucket
+  let baseName = desiredFileName ? desiredFileName.replace(/\.(txt|docx?)$/i, '') : `Resume_Tailored_${Date.now()}`;
+  if (!baseName.toLowerCase().endsWith('.pdf')) {
+    baseName = `${baseName}.pdf`;
+  }
+  const fileName = baseName;
   const filePath = `${userId}/${fileName}`;
 
   try {
     let uploadPayload;
-    if (typeof Blob !== 'undefined') {
-      uploadPayload = new Blob([tailoredResumeText], { type: 'text/plain;charset=utf-8' });
-    } else {
-      uploadPayload = tailoredResumeText;
+    try {
+      const pdfBytes = await generatePdfFromResumeText(tailoredResumeText);
+      if (typeof Blob !== 'undefined') {
+        uploadPayload = new Blob([pdfBytes], { type: 'application/pdf' });
+      } else {
+        uploadPayload = pdfBytes;
+      }
+    } catch (pdfErr) {
+      console.warn('PDF generation fallback notice:', pdfErr);
+      if (typeof Blob !== 'undefined') {
+        uploadPayload = new Blob([tailoredResumeText], { type: 'text/plain;charset=utf-8' });
+      } else {
+        uploadPayload = tailoredResumeText;
+      }
     }
 
     const { data: uploadData, error: uploadErr } = await supabase.storage
       .from('resumes')
       .upload(filePath, uploadPayload, {
         upsert: true,
-        contentType: 'text/plain;charset=utf-8',
+        contentType: 'application/pdf',
       });
 
     if (uploadErr) {
@@ -311,6 +429,7 @@ export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, d
       filePath,
       signedUrl,
       bucketSaved: true,
+      isPdf: true,
     };
   } catch (err) {
     console.error('uploadTailoredResumeToBucket error:', err);
@@ -618,7 +737,7 @@ export async function tailorResumeForJob({
   const cleanComp = (companyName || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 15);
   const ts = Date.now().toString().slice(-4);
   const compPart = cleanComp ? `_${cleanComp}` : '';
-  const newFileName = `Resume_Tailored_${cleanTitle}${compPart}_${ts}.txt`;
+  const newFileName = `Resume_Tailored_${cleanTitle}${compPart}_${ts}.pdf`;
 
   // 1. Direct LLM resume optimization if API key is provided
   if (llmApiKey && llmApiKey.trim().length > 5) {
