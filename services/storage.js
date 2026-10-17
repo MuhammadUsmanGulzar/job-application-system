@@ -142,6 +142,20 @@ export async function getSettings(userId) {
         .single();
 
       if (!error && data) {
+        let resName = data.resume_name || '';
+        let resContent = data.resume_content || '';
+
+        // If resume is empty, try loading from storage bucket
+        if ((!resContent || !resName) && userId) {
+          try {
+            const bucketData = await syncResumeFromBucket(userId);
+            if (bucketData?.resumeContent) {
+              resName = bucketData.resumeName;
+              resContent = bucketData.resumeContent;
+            }
+          } catch (_syncErr) {}
+        }
+
         const mapped = {
           llmProvider: data.llm_provider || 'OpenAI',
           llmApiKey: data.llm_api_key || '',
@@ -149,8 +163,8 @@ export async function getSettings(userId) {
           googleSenderEmail: data.google_sender_email || '',
           googleClientId: data.google_client_id || '',
           googleClientSecret: data.google_client_secret || '',
-          resumeName: data.resume_name || '',
-          resumeContent: data.resume_content || '',
+          resumeName: resName,
+          resumeContent: resContent,
           googleConnectedAt: data.google_connected_at || null,
         };
         // Cache locally
@@ -243,11 +257,117 @@ export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
       is_primary: true,
     });
 
+    // Automatically trigger Python Agent to extract text and sync user_settings
+    try {
+      await syncResumeFromBucket(userId);
+    } catch (_syncErr) {}
+
     return { success: true, filePath, data };
   } catch (err) {
     console.error('Resume bucket upload error:', err);
     throw err;
   }
+}
+
+// Synchronize and load resume directly from Supabase Storage bucket 'resumes/{userId}/'
+export async function syncResumeFromBucket(userId) {
+  if (!userId) throw new Error('User ID required to sync resume from bucket');
+
+  // 1. Try calling the Python Agent endpoint to extract PDF/docx/text
+  try {
+    const resp = await fetch('http://localhost:8000/api/agent/sync-resume-from-bucket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.success && data.resume_content) {
+        // Cache locally in AsyncStorage
+        try {
+          const key = `${SETTINGS_KEY}_${userId}`;
+          const currentStr = await AsyncStorage.getItem(key);
+          const current = currentStr ? JSON.parse(currentStr) : {};
+          const updated = {
+            ...current,
+            resumeName: data.resume_name || 'Resume.pdf',
+            resumeContent: data.resume_content,
+          };
+          await AsyncStorage.setItem(key, JSON.stringify(updated));
+        } catch (_cErr) {}
+
+        return {
+          resumeName: data.resume_name,
+          resumeContent: data.resume_content,
+          source: 'python-agent-bucket',
+        };
+      }
+    }
+  } catch (agentErr) {
+    console.log('Python bucket agent sync note:', agentErr.message);
+  }
+
+  // 2. Direct Supabase Storage Bucket query (fallback)
+  try {
+    const { data: files, error: listErr } = await supabase.storage.from('resumes').list(userId);
+    if (!listErr && files && files.length > 0) {
+      const realFiles = files.filter(f => f.name && !f.name.endsWith('/'));
+      if (realFiles.length > 0) {
+        // Sort descending by updated_at or created_at
+        realFiles.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+        const chosen = realFiles[0];
+        const filePath = `${userId}/${chosen.name}`;
+
+        // First check if text is already saved in user_settings from prior sync
+        const { data: row } = await supabase.from('user_settings').select('resume_name, resume_content').eq('user_id', userId).maybeSingle();
+        if (row && row.resume_content) {
+          return {
+            resumeName: row.resume_name || chosen.name,
+            resumeContent: row.resume_content,
+            source: 'supabase-bucket',
+          };
+        }
+
+        // Download file from bucket
+        const { data: blob, error: dlErr } = await supabase.storage.from('resumes').download(filePath);
+        if (!dlErr && blob) {
+          let text = '';
+          if (chosen.name.toLowerCase().endsWith('.txt') || chosen.name.toLowerCase().endsWith('.md')) {
+            text = await blob.text();
+          }
+
+          if (text) {
+            await supabase.from('user_settings').update({
+              resume_name: chosen.name,
+              resume_content: text,
+            }).eq('user_id', userId);
+
+            return {
+              resumeName: chosen.name,
+              resumeContent: text,
+              source: 'supabase-bucket',
+            };
+          }
+        }
+      }
+    }
+  } catch (storageErr) {
+    console.warn('Direct bucket download error:', storageErr);
+  }
+
+  // 3. Fallback to user_settings table
+  try {
+    const { data: fallbackRow } = await supabase.from('user_settings').select('resume_name, resume_content').eq('user_id', userId).maybeSingle();
+    if (fallbackRow && fallbackRow.resume_content) {
+      return {
+        resumeName: fallbackRow.resume_name || 'Resume.txt',
+        resumeContent: fallbackRow.resume_content,
+        source: 'user_settings',
+      };
+    }
+  } catch (_fbErr) {}
+
+  return null;
 }
 
 // --------------------------------------------------------
@@ -270,6 +390,14 @@ export async function fetchUserResume(userId) {
         };
       }
     } catch (_e) {}
+
+    // If user_settings doesn't have resume_content, attempt loading directly from the bucket
+    try {
+      const bucketResult = await syncResumeFromBucket(userId);
+      if (bucketResult && bucketResult.resumeContent) {
+        return bucketResult;
+      }
+    } catch (_bErr) {}
   }
 
   // Check local cache

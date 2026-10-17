@@ -36,7 +36,8 @@ import {
   mapApplicationRow,
   fetchUserResume,
   updateResumeContent,
-  tailorResumeForJob
+  tailorResumeForJob,
+  syncResumeFromBucket
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG } from './services/ai';
 import { sendEmail } from './services/email';
@@ -309,12 +310,20 @@ export default function App() {
   const [resumeViewMode, setResumeViewMode] = useState('preview'); // 'preview' | 'edit'
   const [resumeEditText, setResumeEditText] = useState('');
   const [isSavingResumeText, setIsSavingResumeText] = useState(false);
+  const [isSyncingBucket, setIsSyncingBucket] = useState(false);
 
   useEffect(() => {
     if (settings?.resumeContent) {
       setResumeEditText(settings.resumeContent);
     }
   }, [settings?.resumeContent]);
+
+  // Auto-sync resume from storage bucket if user has no resume text loaded
+  useEffect(() => {
+    if (activeTab === 'resume' && session?.user?.id && !settings?.resumeContent && !isSyncingBucket) {
+      handleSyncResumeFromBucket();
+    }
+  }, [activeTab, session?.user?.id, settings?.resumeContent]);
 
   const clearApplicationForm = () => {
     setJobTitle('');
@@ -760,6 +769,33 @@ export default function App() {
       showSuccess('Resume downloaded successfully!', 'Downloaded');
     } else {
       handleCopyText(content);
+    }
+  };
+
+  const handleSyncResumeFromBucket = async () => {
+    if (!session?.user?.id) {
+      showError('Please sign in to load your resume from the cloud storage bucket.', 'Notice');
+      return;
+    }
+    setIsSyncingBucket(true);
+    try {
+      const res = await syncResumeFromBucket(session.user.id);
+      if (res && res.resumeContent) {
+        const updated = {
+          ...settings,
+          resumeName: res.resumeName,
+          resumeContent: res.resumeContent,
+        };
+        setSettings(updated);
+        setResumeEditText(res.resumeContent);
+        showSuccess(`Loaded "${res.resumeName}" (${res.resumeContent.length} chars) from your cloud bucket!`, 'Resume Loaded');
+      } else {
+        showError('No resume file found in your cloud storage bucket. Please upload a resume first.', 'Bucket Empty');
+      }
+    } catch (err) {
+      showError('Failed to load resume from bucket: ' + err.message, 'Bucket Error');
+    } finally {
+      setIsSyncingBucket(false);
     }
   };
 
@@ -2205,6 +2241,18 @@ export default function App() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
+                    style={[styles.resumeActionButton, { backgroundColor: '#0284c7' }]}
+                    onPress={handleSyncResumeFromBucket}
+                    disabled={isSyncingBucket}
+                  >
+                    {isSyncingBucket ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.resumeActionButtonText}>🔄 Sync Bucket</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
                     style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
                     onPress={pickDocument}
                   >
@@ -2331,7 +2379,19 @@ export default function App() {
                       <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', maxWidth: 300, marginBottom: 16 }}>
                         Upload your resume file or let the AI Tailor Agent generate a tailored baseline for you.
                       </Text>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                        <TouchableOpacity
+                          style={[styles.resumeActionButton, { backgroundColor: '#0284c7' }]}
+                          onPress={handleSyncResumeFromBucket}
+                          disabled={isSyncingBucket}
+                        >
+                          {isSyncingBucket ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={styles.resumeActionButtonText}>📥 Load from Bucket</Text>
+                          )}
+                        </TouchableOpacity>
+
                         <TouchableOpacity
                           style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
                           onPress={pickDocument}
