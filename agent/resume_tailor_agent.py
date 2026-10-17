@@ -32,14 +32,14 @@ class ResumeTailorState(TypedDict, total=False):
     resume_name: Optional[str]
     save_to_db: bool
     ats_report: Dict[str, Any]
-
+    
     # Processed Fields
     extracted_keywords: List[str]
     matched_skills: List[str]
     missing_skills: List[str]
     tailored_resume: str
     enhancements: List[str]
-
+    
     # Status & Logging
     status: str  # "STARTING" | "LOADED" | "ANALYZED" | "TAILORED" | "SAVED" | "FAILED"
     error: Optional[str]
@@ -58,18 +58,18 @@ def extract_resume_from_bucket(user_id: str, supabase_client: Optional[Client] =
     """
     if not user_id:
         return "", ""
-
+    
     supabase = supabase_client or get_supabase_client()
     try:
         files = supabase.storage.from_("resumes").list(user_id)
         if not files:
             return "", ""
-
+        
         # Filter out folder placeholders
         real_files = [f for f in files if f.get("name") and not f.get("name").endswith("/")]
         if not real_files:
             return "", ""
-
+        
         # Sort descending by updated_at or created_at
         real_files.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
         chosen_file = real_files[0]
@@ -109,7 +109,7 @@ def extract_resume_from_bucket(user_id: str, supabase_client: Optional[Client] =
                 }).eq("user_id", user_id).execute()
             except Exception:
                 pass
-
+            
             # Sync to resumes table
             try:
                 supabase.table("resumes").upsert({
@@ -276,7 +276,7 @@ Software Engineer | AI & Full-Stack Developer
 email: applicant@example.com | Phone: +1 555-0199 | Location: Remote
 
 PROFESSIONAL SUMMARY
-Passionate Software Engineer with expertise in building scalable web applications, integrating AI agents, and automating business workflows.
+Passion-driven Software Engineer with expertise in building scalable web applications, integrating AI agents, and automating business workflows.
 
 CORE COMPETENCIES & TECHNICAL SKILLS
 • Programming: Python, JavaScript, TypeScript, HTML/CSS
@@ -306,7 +306,7 @@ def analyze_requirements_node(state: ResumeTailorState) -> ResumeTailorState:
     """
     logs = list(state.get("logs", []))
     req_text = (state.get("requirements") or "") + " " + (state.get("job_description") or "") + " " + (state.get("job_title") or "")
-
+    
     # Normalize unicode characters
     req_text = unicodedata.normalize("NFKD", req_text)
 
@@ -389,7 +389,7 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
     # Break raw resume into sections
     lines = raw.split("\n")
     name_line = lines[0].strip() if len(lines) > 0 and lines[0].strip() else "CANDIDATE"
-
+    
     # Check if second line is a contact line or headline
     contact_info = ""
     for line in lines[1:5]:
@@ -422,18 +422,15 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
     # Reconstruct tailored resume document
     tailored_blocks = [
         f"{name_line.upper()}",
-        f"{job_title.upper()}",
+        f"{job_title.upper()} | TARGET ROLE",
         f"{contact_info}" if contact_info else "",
         "",
-        "═══════════════════════════════════════════════════════════════════",
         "PROFESSIONAL SUMMARY",
-        "═══════════════════════════════════════════════════════════════════",
         tailored_summary,
         "",
-        "═══════════════════════════════════════════════════════════════════",
         "CORE COMPETENCIES & TARGET SKILLS",
-        "═══════════════════════════════════════════════════════════════════",
-        f"• Key Requirements & Tools: {skills_formatted}",
+        f"• Key Technologies & Methodologies: {skills_formatted}",
+        "• Focus Areas: System Reliability, Automation Pipelines, Clean Architecture",
     ]
 
     # Incorporate remaining sections from raw resume (Experience, Projects, Education)
@@ -455,9 +452,7 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
         # Detect experience or education
         if re.search(r"^(?:PROFESSIONAL\s+EXPERIENCE|EXPERIENCE|WORK\s+HISTORY|PROJECTS|EDUCATION)", stripped, re.IGNORECASE):
             body_lines.append("")
-            body_lines.append("═══════════════════════════════════════════════════════════════════")
             body_lines.append(stripped.upper())
-            body_lines.append("═══════════════════════════════════════════════════════════════════")
             continue
 
         if re.search(r"^(?:SUMMARY|PROFESSIONAL\s+SUMMARY|ABOUT|PROFILE)", stripped, re.IGNORECASE):
@@ -469,9 +464,7 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
             if re.search(r"^[A-Z\s]{4,}$", stripped) and not stripped.startswith("•"):
                 has_seen_summary = False
                 body_lines.append("")
-                body_lines.append("═══════════════════════════════════════════════════════════════════")
                 body_lines.append(stripped.upper())
-                body_lines.append("═══════════════════════════════════════════════════════════════════")
             continue
 
         # Retain original bullet points and experience details
@@ -481,17 +474,13 @@ def tailor_resume_content_node(state: ResumeTailorState) -> ResumeTailorState:
     if len(body_lines) < 5:
         body_lines.extend([
             "",
-            "═══════════════════════════════════════════════════════════════════",
             "PROFESSIONAL EXPERIENCE",
-            "═══════════════════════════════════════════════════════════════════",
             f"{job_title} | Engineering & Technology Solutions",
             f"• Implemented robust software features leveraging {top_skills_to_highlight[0] if top_skills_to_highlight else 'Python'} and modern engineering practices.",
             f"• Optimized system performance, automated manual tasks, and improved overall reliability.",
             "• Collaborated with cross-functional team members to deliver high-quality deliverables on schedule.",
             "",
-            "═══════════════════════════════════════════════════════════════════",
             "EDUCATION & CREDENTIALS",
-            "═══════════════════════════════════════════════════════════════════",
             "Bachelor of Science in Computer Science or Related Field",
         ])
 

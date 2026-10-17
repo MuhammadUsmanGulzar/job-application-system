@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabase';
+import { performLlmResumeOptimization } from './ai.js';
 
 const SETTINGS_KEY = '@job_system_settings';
 const APPLICATIONS_KEY = '@job_system_applications';
@@ -526,8 +527,41 @@ export async function tailorResumeForJob({
   rawResume = '',
   resumeName = '',
   atsReport = null,
+  llmProvider = 'OpenAI',
+  llmApiKey = '',
+  llmModel = '',
 }) {
-  // 1. First attempt LangGraph Python backend agent
+  const newFileName = `Resume_Tailored_${jobTitle.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 25)}.txt`;
+
+  // 1. Direct LLM resume optimization if API key is provided
+  if (llmApiKey && llmApiKey.trim().length > 5) {
+    try {
+      const result = await performLlmResumeOptimization({
+        jobTitle,
+        companyName,
+        requirements,
+        description,
+        rawResume,
+        atsReport,
+        provider: llmProvider,
+        apiKey: llmApiKey,
+        model: llmModel,
+      });
+
+      if (result.success && result.tailoredResume) {
+        if (userId) {
+          try {
+            await updateResumeContent(userId, result.tailoredResume, result.resumeName || newFileName);
+          } catch (_e) {}
+        }
+        return result;
+      }
+    } catch (llmErr) {
+      console.warn(`Direct LLM resume tailoring notice (${llmErr.message}), falling back to smart local optimizer.`);
+    }
+  }
+
+  // 2. Attempt local LangGraph Python backend agent
   try {
     const response = await fetch('http://localhost:8000/api/agent/tailor-resume', {
       method: 'POST',
@@ -542,6 +576,9 @@ export async function tailorResumeForJob({
         resume_name: resumeName,
         save_to_db: Boolean(userId),
         ats_report: atsReport || {},
+        llm_provider: llmProvider,
+        llm_api_key: llmApiKey,
+        llm_model: llmModel,
       }),
     });
 
@@ -551,7 +588,7 @@ export async function tailorResumeForJob({
         return {
           success: true,
           tailoredResume: result.tailored_resume,
-          resumeName: result.resume_name || `Resume_Tailored_${jobTitle.replace(/\s+/g, '_')}.txt`,
+          resumeName: result.resume_name || newFileName,
           matchedSkills: result.matched_skills || [],
           missingSkills: result.missing_skills || [],
           enhancements: result.enhancements || [],
@@ -560,10 +597,10 @@ export async function tailorResumeForJob({
       }
     }
   } catch (_agentErr) {
-    // Python agent server offline, fallback to client-side LangGraph logic
+    // Python agent server offline, fallback to smart client-side optimizer
   }
 
-  // 2. Client-side tailoring engine fallback
+  // 3. Smart clean ATS resume optimizer (zero ugly ASCII boxes, clean recruiter formatting)
   let baseResume = (rawResume || '').trim();
   if (!baseResume && userId) {
     const loaded = await fetchUserResume(userId);
@@ -574,12 +611,12 @@ export async function tailorResumeForJob({
     baseResume = `PROFESSIONAL SUMMARY
 Experienced Software Engineer skilled in building scalable applications, designing robust APIs, and integrating modern technologies.
 
-TECHNICAL SKILLS
-• Programming: Python, JavaScript, TypeScript, React, Node.js
+CORE COMPETENCIES & TECHNICAL SKILLS
+• Programming & Frameworks: Python, JavaScript, TypeScript, React, Node.js
 • Tools & Databases: PostgreSQL, Supabase, Git, REST APIs, Automation Workflows
 
 PROFESSIONAL EXPERIENCE
-Software Engineer | Engineering Solutions
+Software Engineer | Technology Solutions
 • Designed and developed performant software systems and automated workflows.
 • Collaborated with engineering teams to build end-to-end features and APIs.
 
@@ -587,51 +624,99 @@ EDUCATION
 Bachelor of Science in Computer Science`;
   }
 
-  // Extract skills from requirements
-  const techKeywords = [
-    'Python', 'JavaScript', 'TypeScript', 'React', 'React Native', 'Next.js', 'Node.js',
-    'FastAPI', 'LangGraph', 'LangChain', 'OpenAI', 'ChatGPT', 'Claude', 'Gemini',
-    'LLMs', 'Generative AI', 'AI Agents', 'Prompt Engineering', 'n8n', 'Zapier',
-    'PostgreSQL', 'Supabase', 'MongoDB', 'Docker', 'AWS', 'REST APIs', 'CI/CD'
+  // Strip any old ASCII border lines (e.g. ═════ or ─────)
+  const cleanedBase = baseResume
+    .replace(/[═─│┌┐└┘║╔╗╚╝=-]{4,}/g, '')
+    .replace(/Status:\s*ATS-Optimized[^\n]*\n?/gi, '')
+    .replace(/Target Organization:[^\n]*\n?/gi, '')
+    .trim();
+
+  // Extract contact line / name from the first few lines
+  const lines = cleanedBase.split('\n').map((l) => l.trim()).filter(Boolean);
+  let candidateName = 'CANDIDATE';
+  let contactLine = '';
+  let bodyStartIndex = 0;
+
+  if (lines.length > 0) {
+    // If first line isn't a known section header, it's the candidate's name
+    if (!/^(PROFESSIONAL|SUMMARY|EXPERIENCE|EDUCATION|SKILLS|CORE)/i.test(lines[0])) {
+      candidateName = lines[0];
+      bodyStartIndex = 1;
+    }
+    // Check second line for contact info
+    if (lines.length > 1 && /(@|phone|\+|\bemail\b|linkedin|github|\|)/i.test(lines[1])) {
+      contactLine = lines[1];
+      bodyStartIndex = 2;
+    }
+  }
+
+  // Collect skills to highlight from job requirements and ATS report
+  const reportMatches = atsReport?.matchedSkills || [];
+  const reportMissing = atsReport?.missingSkills || [];
+  const combinedSkills = [...new Set([...reportMatches, ...reportMissing.slice(0, 4)])].filter(Boolean);
+  const skillsStr = combinedSkills.length > 0
+    ? combinedSkills.slice(0, 10).join(', ')
+    : 'Workflow Automation, API Integration, Problem Solving';
+
+  // Construct crisp, tailored summary
+  const tailoredSummary = `Results-driven ${jobTitle} with demonstrated expertise in ${skillsStr}. Proven track record of architecting scalable solutions, streamlining business workflows, and delivering high-quality technical outcomes. Adept at rapid cross-stack adaptation and focused on driving engineering impact for ${companyName || 'the hiring organization'}.`;
+
+  // Parse remaining sections from original resume (Experience, Projects, Education)
+  const remainingLines = lines.slice(bodyStartIndex);
+  const preservedSections = [];
+  let skipSection = false;
+
+  for (const line of remainingLines) {
+    // If it's an old summary or competencies header, skip its content
+    if (/^(PROFESSIONAL SUMMARY|SUMMARY|EXECUTIVE SUMMARY|PROFILE|ABOUT ME)$/i.test(line)) {
+      skipSection = true;
+      continue;
+    }
+    if (/^(CORE COMPETENCIES|SKILLS|TECHNICAL SKILLS|TARGET SKILLS)$/i.test(line)) {
+      skipSection = true;
+      continue;
+    }
+    // If it's an Experience, Projects, Education header, resume recording
+    if (/^(PROFESSIONAL EXPERIENCE|WORK EXPERIENCE|EXPERIENCE|PROJECTS|KEY PROJECTS|EDUCATION|CERTIFICATIONS)/i.test(line)) {
+      skipSection = false;
+      preservedSections.push('');
+      preservedSections.push(line.toUpperCase());
+      continue;
+    }
+
+    if (!skipSection) {
+      preservedSections.push(line);
+    }
+  }
+
+  // Construct clean, ATS-standard plain text document
+  const resumeBlocks = [
+    candidateName.toUpperCase(),
+    `${jobTitle.toUpperCase()} | TARGET ROLE`,
+    contactLine || '',
+    '',
+    'PROFESSIONAL SUMMARY',
+    tailoredSummary,
+    '',
+    'CORE COMPETENCIES & TECHNICAL SKILLS',
+    `• Target Technologies & Methodologies: ${skillsStr}`,
+    '• Focus Areas: Scalable Architectures, Automation Pipelines, Clean API Integrations',
+    '',
+    preservedSections.length > 3
+      ? preservedSections.join('\n')
+      : `PROFESSIONAL EXPERIENCE
+Software Engineer | Technology Solutions
+• Developed and deployed robust, scalable software features leveraging modern best practices.
+• Built automated workflows and integrated REST APIs to streamline operational efficiency.
+• Collaborated in agile cross-functional teams to deliver mission-critical software on schedule.
+
+EDUCATION
+Bachelor of Science in Computer Science or Related Field`,
   ];
 
-  const fullReqText = `${jobTitle} ${companyName} ${requirements} ${description}`.toLowerCase();
-  const jobSkills = techKeywords.filter((kw) => fullReqText.includes(kw.toLowerCase()));
-  const matched = jobSkills.filter((kw) => baseResume.toLowerCase().includes(kw.toLowerCase()));
-  const missing = jobSkills.filter((kw) => !baseResume.toLowerCase().includes(kw.toLowerCase()));
-  const reportMatches = atsReport?.matchedSkills || [];
-  const topSkills = [...new Set([...matched, ...reportMatches])].slice(0, 10);
-  const topSkillsStr = topSkills.slice(0, 10).join(', ');
+  const tailoredResume = resumeBlocks.filter((b, i) => !(b === '' && resumeBlocks[i - 1] === '')).join('\n').trim();
 
-  const tailoredSummary = topSkills.length
-    ? `Results-oriented ${jobTitle} with demonstrated experience in ${topSkillsStr}. Proven track record of delivering high-quality solutions, improving workflows, and collaborating across teams. Prepared to bring this relevant experience to ${companyName || 'the hiring team'}.`
-    : `Results-oriented professional targeting the ${jobTitle} opportunity at ${companyName || 'the hiring organization'}. Proven record of delivering high-quality solutions, improving workflows, and collaborating across teams.`;
-
-  const newFileName = `Resume_Tailored_${jobTitle.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 25)}.txt`;
-
-  // Construct tailored resume
-  const tailoredResume = `${jobTitle.toUpperCase()}
-Target Organization: ${companyName || 'Hiring Company'}
-Status: ATS-Optimized Tailored Resume
-
-═══════════════════════════════════════════════════════════════════
-TARGETED PROFESSIONAL SUMMARY
-═══════════════════════════════════════════════════════════════════
-${tailoredSummary}
-
-═══════════════════════════════════════════════════════════════════
-CORE COMPETENCIES & MATCHED REQUIREMENTS
-═══════════════════════════════════════════════════════════════════
-• Verified Target Skills: ${topSkillsStr || 'See experience and projects below'}
-• Focus Areas: System Reliability, Automation Workflows, Clean Code & API Design
-
-═══════════════════════════════════════════════════════════════════
-EXPERIENCE & BACKGROUND
-═══════════════════════════════════════════════════════════════════
-${baseResume}
-`;
-
-  // Persist to user settings
+  // Persist tailored resume
   if (userId) {
     try {
       await updateResumeContent(userId, tailoredResume, newFileName);
@@ -642,15 +727,15 @@ ${baseResume}
     success: true,
     tailoredResume,
     resumeName: newFileName,
-    matchedSkills: topSkills,
-    missingSkills: missing,
+    matchedSkills: reportMatches,
+    missingSkills: reportMissing.slice(4),
     enhancements: [
-      `Headline and target title tailored specifically for "${jobTitle}"`,
-      `Executive summary generated and optimized for ${companyName || 'the target role'}`,
-      `Elevated matching key competencies: ${topSkillsStr}`,
-      'Formatted for high ATS parseability and recruiter readability',
+      `Professional title and headline aligned directly with "${jobTitle}"`,
+      `Executive summary tailored specifically for ${companyName || 'the target company'}`,
+      `Highlighted high-impact competencies: ${skillsStr}`,
+      'Formatted to 100% clean ATS standard with zero parsing barriers',
     ],
-    source: 'client-engine',
+    source: 'smart-local-optimizer',
   };
 }
 // --------------------------------------------------------

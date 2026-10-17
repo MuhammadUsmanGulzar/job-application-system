@@ -44,6 +44,19 @@ export default function AtsDashboard({
                 {report.stage === 'after' ? 'AFTER OPTIMIZATION' : 'CURRENT RESUME'}
               </Text>
             </View>
+            {report.source ? (
+              <View style={[styles.stageBadge, styles.engineBadge]}>
+                <Text style={styles.engineBadgeText}>
+                  {report.source.startsWith('llm-')
+                    ? `AI Engine (${report.source.replace('llm-', '').toUpperCase()})`
+                    : report.source === 'smart-local-ats-engine'
+                      ? 'Smart Local Engine'
+                      : report.source === 'langgraph-ats-agent'
+                        ? 'LangGraph Agent'
+                        : 'Local Engine'}
+                </Text>
+              </View>
+            ) : null}
           </View>
           <Text style={styles.title}>Resume-to-job fit analysis</Text>
           <Text style={styles.summary}>{report.summary}</Text>
@@ -158,6 +171,8 @@ const styles = StyleSheet.create({
   stageBadgeAfter: { backgroundColor: '#e9f7ef' },
   stageBadgeText: { color: '#647069', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   stageBadgeTextAfter: { color: '#166534' },
+  engineBadge: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0' },
+  engineBadgeText: { color: '#15803d', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   title: { color: '#17201c', fontSize: 22, fontWeight: '700', marginBottom: 6 },
   summary: { color: '#647069', fontSize: 13, lineHeight: 20, maxWidth: 720 },
   scoreCircle: { alignItems: 'center', borderRadius: 50, borderWidth: 1, height: 96, justifyContent: 'center', minWidth: 96 },

@@ -42,6 +42,9 @@ class ResumeTailorRequest(BaseModel):
     resume_name: str = ""
     save_to_db: bool = True
     ats_report: Dict[str, Any] = Field(default_factory=dict)
+    llm_provider: str = "OpenAI"
+    llm_api_key: str = ""
+    llm_model: str = ""
 
 class AtsAnalysisRequest(BaseModel):
     user_id: str = ""
@@ -54,6 +57,9 @@ class AtsAnalysisRequest(BaseModel):
     resume_name: str = ""
     stage: str = "before"
     save_to_db: bool = True
+    llm_provider: str = "OpenAI"
+    llm_api_key: str = ""
+    llm_model: str = ""
 
 class ResumeBucketSyncRequest(BaseModel):
     user_id: str

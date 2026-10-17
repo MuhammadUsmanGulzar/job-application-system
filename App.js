@@ -756,6 +756,9 @@ export default function App() {
         resumeContent,
         resumeName,
         stage,
+        llmProvider: settings.llmProvider,
+        llmApiKey: settings.llmApiKey,
+        llmModel: settings.llmModel,
       });
       setAtsReport(report);
       if (stage === 'before') setAtsBaselineReport(report);
@@ -790,6 +793,9 @@ export default function App() {
         rawResume: settings.resumeContent || '',
         resumeName: settings.resumeName || 'Resume.txt',
         atsReport: atsBaselineReport || atsReport,
+        llmProvider: settings.llmProvider,
+        llmApiKey: settings.llmApiKey,
+        llmModel: settings.llmModel,
       });
       if (!result.success || !result.tailoredResume) throw new Error('No updated resume was returned.');
 
@@ -835,6 +841,9 @@ export default function App() {
         rawResume: settings.resumeContent || '',
         resumeName: settings.resumeName || 'Resume.txt',
         atsReport: atsReport || null,
+        llmProvider: settings.llmProvider,
+        llmApiKey: settings.llmApiKey,
+        llmModel: settings.llmModel,
       });
 
       if (result.success && result.tailoredResume) {

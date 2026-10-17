@@ -10,16 +10,36 @@ from resume_tailor_agent import extract_resume_from_bucket, get_supabase_client
 
 
 SKILL_CATALOG = [
-    "Python", "JavaScript", "TypeScript", "Java", "C#", "C++", "SQL", "HTML", "CSS",
+    "Python", "JavaScript", "TypeScript", "Java", "C#", "C++", "Go", "Rust", "SQL", "HTML", "CSS",
     "React", "React Native", "Next.js", "Vue", "Angular", "Node.js", "Express",
-    "FastAPI", "Django", "Flask", "LangGraph", "LangChain", "OpenAI", "LLMs",
-    "Generative AI", "AI Agents", "Prompt Engineering", "Machine Learning", "NLP",
-    "Data Science", "Pandas", "NumPy", "TensorFlow", "PyTorch", "n8n", "Zapier",
+    "FastAPI", "Django", "Flask", "NestJS", "LangGraph", "LangChain", "OpenAI", "ChatGPT", "Claude", "Gemini", "LLMs",
+    "Generative AI", "AI Agents", "Prompt Engineering", "Custom GPTs", "Chatbots", "Machine Learning", "Deep Learning", "NLP",
+    "Data Science", "Pandas", "NumPy", "TensorFlow", "PyTorch", "Hugging Face", "Vector Databases", "Pinecone", "RAG",
+    "Automation", "Workflow Automation", "n8n", "Zapier", "Make",
     "PostgreSQL", "Supabase", "MongoDB", "MySQL", "Redis", "Docker", "Kubernetes",
     "AWS", "Azure", "GCP", "Git", "GitHub", "REST APIs", "GraphQL", "CI/CD",
-    "Agile", "Scrum", "Unit Testing", "Automation", "SEO", "Digital Marketing",
+    "Agile", "Scrum", "Unit Testing", "SEO", "Digital Marketing", "Content Strategy",
     "Communication", "Leadership", "Problem Solving", "Teamwork",
 ]
+
+SKILL_SYNONYMS = {
+    "generative ai": ["genai", "gen ai", "llm", "llms", "large language models", "chatgpt", "openai", "claude", "gemini", "prompt engineering"],
+    "ai agents": ["agentic", "agents", "autonomous agents", "langgraph", "crewai", "autogen", "custom gpts", "ai assistants"],
+    "llms": ["large language models", "llm", "generative ai", "genai", "openai", "claude", "gpt"],
+    "automation": ["workflow automation", "process automation", "n8n", "zapier", "make", "automations", "automated"],
+    "n8n": ["workflow automation", "automation", "make", "zapier"],
+    "zapier": ["workflow automation", "automation", "n8n", "make"],
+    "make": ["integromat", "workflow automation", "automation", "n8n", "zapier"],
+    "python": ["python3", "py", "fastapi", "django", "flask"],
+    "javascript": ["js", "es6", "typescript", "react", "node.js"],
+    "typescript": ["ts", "javascript"],
+    "react": ["react.js", "reactjs", "react native", "next.js"],
+    "postgresql": ["postgres", "psql", "sql", "supabase"],
+    "supabase": ["postgresql", "postgres", "baas"],
+    "docker": ["containers", "containerization", "kubernetes"],
+    "seo": ["search engine optimization", "organic search", "keyword research"],
+    "digital marketing": ["content strategy", "marketing technology", "seo"],
+}
 
 
 class AtsAgentState(TypedDict, total=False):
@@ -50,6 +70,16 @@ class AtsAgentState(TypedDict, total=False):
 def _contains(text: str, term: str) -> bool:
     pattern = r"(^|[^a-z0-9])" + re.escape(term).replace(r"\ ", r"[\s/-]+") + r"([^a-z0-9]|$)"
     return bool(re.search(pattern, text, re.IGNORECASE))
+
+
+def _matches_skill_or_synonym(text: str, skill: str) -> bool:
+    if _contains(text, skill):
+        return True
+    synonyms = SKILL_SYNONYMS.get(skill.lower(), [])
+    for syn in synonyms:
+        if _contains(text, syn):
+            return True
+    return False
 
 
 def _clamp(value: float) -> int:
@@ -106,9 +136,9 @@ def extract_signals_node(state: AtsAgentState) -> AtsAgentState:
     )
     resume_text = unicodedata.normalize("NFKD", state.get("raw_resume") or "")
     required_skills = [skill for skill in SKILL_CATALOG if _contains(job_text, skill)]
-    resume_skills = [skill for skill in SKILL_CATALOG if _contains(resume_text, skill)]
-    matched_skills = [skill for skill in required_skills if _contains(resume_text, skill)]
-    missing_skills = [skill for skill in required_skills if not _contains(resume_text, skill)]
+    resume_skills = [skill for skill in SKILL_CATALOG if _matches_skill_or_synonym(resume_text, skill)]
+    matched_skills = [skill for skill in required_skills if _matches_skill_or_synonym(resume_text, skill)]
+    missing_skills = [skill for skill in required_skills if not _matches_skill_or_synonym(resume_text, skill)]
 
     logs.append(f"ATS Agent found {len(matched_skills)} matched and {len(missing_skills)} missing job skills.")
     return {
@@ -133,10 +163,25 @@ def score_resume_node(state: AtsAgentState) -> AtsAgentState:
     matched_skills = state.get("matched_skills", [])
     resume_skills = state.get("resume_skills", [])
 
-    skills_score = (len(matched_skills) / len(required_skills) * 100) if required_skills else min(82, 45 + len(resume_skills) * 4)
+    # Balanced skill scoring
+    if required_skills:
+        core_context = f"{state.get('job_title', '')} {state.get('requirements', '')}".lower()
+        core_skills = [s for s in required_skills if s.lower() in core_context]
+        core_matched = [s for s in core_skills if s in matched_skills]
+        if core_skills and len(core_skills) < len(required_skills):
+            core_ratio = len(core_matched) / len(core_skills)
+            sec_skills = [s for s in required_skills if s not in core_skills]
+            sec_matched = [s for s in sec_skills if s in matched_skills]
+            sec_ratio = len(sec_matched) / len(sec_skills) if sec_skills else 1.0
+            skills_score = (core_ratio * 75) + (sec_ratio * 25)
+        else:
+            skills_score = (len(matched_skills) / len(required_skills)) * 100
+    else:
+        skills_score = min(88, 55 + len(resume_skills) * 3)
+
     title_terms = [term for term in re.split(r"[^a-z0-9+#.]+", (state.get("job_title") or "").lower()) if len(term) > 2]
     title_matches = [term for term in title_terms if term in resume_lower]
-    title_score = (len(title_matches) / len(title_terms) * 100) if title_terms else 65
+    title_score = (len(title_matches) / len(title_terms) * 100) if title_terms else 70
 
     experience_required = bool(re.search(r"(?:[2-9]|10)\+?\s*(?:years?|yrs?)", job_text, re.IGNORECASE))
     has_experience = bool(re.search(r"\b(experience|employment|work history|professional experience)\b", raw_resume, re.IGNORECASE))

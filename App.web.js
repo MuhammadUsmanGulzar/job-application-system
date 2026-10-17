@@ -286,6 +286,7 @@ export default function AppWeb() {
   const [isSavingResume, setIsSavingResume] = useState(false);
   const [isSavingLlm, setIsSavingLlm] = useState(false);
   const [isSavingGoogle, setIsSavingGoogle] = useState(false);
+  const [showLlmApiKey, setShowLlmApiKey] = useState(false);
 
   const [resumeFeedback, setResumeFeedback] = useState('');
   const [llmFeedback, setLlmFeedback] = useState('');
@@ -843,6 +844,9 @@ export default function AppWeb() {
         resumeContent,
         resumeName,
         stage,
+        llmProvider: settings.llmProvider,
+        llmApiKey: settings.llmApiKey,
+        llmModel: settings.llmModel,
       });
 
       setAtsReport(report);
@@ -883,6 +887,9 @@ export default function AppWeb() {
         rawResume: settings.resumeContent || '',
         resumeName: settings.resumeName || 'Resume.txt',
         atsReport: atsBaselineReport || atsReport,
+        llmProvider: settings.llmProvider,
+        llmApiKey: settings.llmApiKey,
+        llmModel: settings.llmModel,
       });
 
       if (!result.success || !result.tailoredResume) {
@@ -934,6 +941,9 @@ export default function AppWeb() {
         rawResume: settings.resumeContent || '',
         resumeName: settings.resumeName || 'Resume.txt',
         atsReport: atsReport || null,
+        llmProvider: settings.llmProvider,
+        llmApiKey: settings.llmApiKey,
+        llmModel: settings.llmModel,
       });
 
       if (result.success && result.tailoredResume) {
@@ -2535,24 +2545,24 @@ export default function AppWeb() {
             {/* Section 2: LLM API Configuration */}
             <View style={[styles.webCard, isMobile && styles.cardMobile]}>
               <View style={[styles.sectionHeader, isMobile && styles.sectionHeaderMobile, { marginBottom: 6 }] }>
-                <Text style={styles.sectionTitle}>2. AI Model & Backend Engine Preferences</Text>
+                <Text style={styles.sectionTitle}>2. AI Model & Frontier LLM Integration</Text>
                 <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#bbf7d0' }}>
-                  <Text style={styles.securityLabel}>Processed securely</Text>
+                  <Text style={styles.securityLabel}>Stored securely</Text>
                 </View>
               </View>
               <Text style={styles.cardDescription}>
-                AI generation is executed securely on your backend workflow (n8n). Configure which provider and model your backend should prioritize.
+                Configure frontier AI models (Google Gemini, OpenAI, or Groq) to power deep ATS Match Analysis and intelligent Resume Optimization.
               </Text>
 
               <View style={{ backgroundColor: '#f8fafc', padding: 14, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 18 }}>
                 <Text style={{ fontSize: 13, color: '#334155', lineHeight: 20 }}>
-                  <Text style={{ fontWeight: '700' }}>Architecture notice:</Text> API keys and model prompts are kept safe on the backend. The frontend handles visual presentation, user inputs, and live generation status.
+                  <Text style={{ fontWeight: '700' }}>Frontier AI vs Local Engine:</Text> When an API key is provided below, your ATS analysis and resume tailoring will be executed with the selected LLM. If left blank, our enhanced Smart Local ATS Engine is automatically used.
                 </Text>
               </View>
 
               <View style={[styles.formRow, isMobile && styles.formRowMobile]}>
                 <View style={[styles.formGroup, { flex: 1 }, !isMobile && { marginRight: 14 }]}>
-                  <Text style={styles.label}>AI Provider Preference</Text>
+                  <Text style={styles.label}>AI Provider</Text>
                   <select
                     style={{
                       width: '100%',
@@ -2566,7 +2576,7 @@ export default function AppWeb() {
                       outline: 'none',
                       cursor: 'pointer',
                     }}
-                    value={settings.llmProvider || 'OpenAI'}
+                    value={settings.llmProvider || 'Gemini'}
                     onChange={(e) => {
                       const selectedProv = e.target.value;
                       const defaultModel = LLM_PROVIDERS_CONFIG[selectedProv]?.defaultModel || '';
@@ -2610,6 +2620,54 @@ export default function AppWeb() {
                     ))}
                   </select>
                 </View>
+              </View>
+
+              {/* API Key Input Field */}
+              <View style={[styles.formGroup, { marginTop: 12 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.label}>{settings.llmProvider} API Key (Optional)</Text>
+                  {LLM_PROVIDERS_CONFIG[settings.llmProvider]?.helpUrl ? (
+                    <a
+                      href={LLM_PROVIDERS_CONFIG[settings.llmProvider].helpUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: '#166534', fontWeight: '600', textDecoration: 'underline' }}
+                    >
+                      Get {settings.llmProvider} Key
+                    </a>
+                  ) : null}
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', position: 'relative' }}>
+                  <TextInput
+                    style={[styles.webInput, { flex: 1, paddingRight: 75, fontFamily: 'monospace' }]}
+                    placeholder={LLM_PROVIDERS_CONFIG[settings.llmProvider]?.placeholder || 'Enter API Key'}
+                    value={settings.llmApiKey || ''}
+                    onChangeText={(text) => setSettings(prev => ({ ...prev, llmApiKey: text.trim() }))}
+                    secureTextEntry={!showLlmApiKey}
+                    autoCapitalize="none"
+                    placeholderTextColor="#9ca3af"
+                  />
+                  <TouchableOpacity
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      paddingVertical: 6,
+                      paddingHorizontal: 8,
+                      backgroundColor: '#f1f5f9',
+                      borderRadius: 6,
+                    }}
+                    onPress={() => setShowLlmApiKey(prev => !prev)}
+                  >
+                    <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600' }}>
+                      {showLlmApiKey ? 'Hide' : 'Show'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 12, color: '#64748b', marginTop: 5 }}>
+                  {settings.llmApiKey
+                    ? 'Frontier LLM is active for ATS scoring and resume optimization.'
+                    : 'Currently using the Smart Local ATS & Optimizer engine (no API key required).'}
+                </Text>
               </View>
 
               <View style={styles.cardActionRow}>
