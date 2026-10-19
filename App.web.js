@@ -312,6 +312,8 @@ export default function AppWeb() {
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [showCountdownPopup, setShowCountdownPopup] = useState(false);
+  const [showAtsAnalysisModal, setShowAtsAnalysisModal] = useState(false);
+  const [pendingGeneration, setPendingGeneration] = useState(null);
   const [generationSeconds, setGenerationSeconds] = useState(0);
   const [generatedResult, setGeneratedResult] = useState(null);
   const [isSending, setIsSending] = useState(false);
@@ -431,6 +433,8 @@ export default function AppWeb() {
     setAtsReport(null);
     setAtsBaselineReport(null);
     setAtsApplicationId('');
+    setShowAtsAnalysisModal(false);
+    setPendingGeneration(null);
     setTailoredResumeName('');
     setTailoredResumeContent('');
     setTailoredResumeBucketPath('');
@@ -529,7 +533,7 @@ export default function AppWeb() {
           setShowCountdownPopup(true);
           return;
         }
-        await handleAnalyzeResumeMatch(extracted);
+        await handleGenerationRequest(extracted);
         return;
       }
     }
@@ -968,7 +972,7 @@ export default function AppWeb() {
 
     setIsAnalyzingAts(true);
     try {
-      let applicationId = options.applicationId || atsApplicationId;
+      let applicationId = options.applicationId || (options.reuseApplication === false ? null : atsApplicationId);
       if (!applicationId) {
         const created = await createApplication(userId, {
           jobTitle: targetTitle,
@@ -1018,6 +1022,31 @@ export default function AppWeb() {
     } finally {
       setIsAnalyzingAts(false);
     }
+  };
+
+  const handleGenerationRequest = async (overrideFields = null) => {
+    if (isGenerating) {
+      setShowCountdownPopup(true);
+      return;
+    }
+
+    const analysis = await handleAnalyzeResumeMatch(overrideFields, {
+      stage: 'before',
+      reuseApplication: false,
+    });
+    if (!analysis?.report) return;
+
+    setPendingGeneration({
+      fields: overrideFields,
+      applicationId: analysis.applicationId,
+    });
+    setShowAtsAnalysisModal(true);
+  };
+
+  const continueAfterAnalysis = () => {
+    const pending = pendingGeneration;
+    setShowAtsAnalysisModal(false);
+    handleGenerateAndApply(pending?.fields || null, { applicationId: pending?.applicationId });
   };
 
   const handleAgentOptimizeResume = async () => {
@@ -1225,7 +1254,7 @@ export default function AppWeb() {
   };
 
   // Submit Application, Immediately Save to 'applications' table, Start Timer/Loader & Trigger n8n
-  const handleGenerateAndApply = async (overrideFields = null) => {
+  const handleGenerateAndApply = async (overrideFields = null, options = {}) => {
     if (isGenerating) {
       setShowCountdownPopup(true);
       return;
@@ -1255,27 +1284,30 @@ export default function AppWeb() {
     }
 
     // 2. IMMEDIATELY SAVE FORM DETAILS IN TABLE 'applications' ON BUTTON CLICK
-    let createdApp = null;
-    let createdAppId = null;
+    let createdAppId = options.applicationId || atsApplicationId || null;
+    let createdApp = createdAppId
+      ? applications.find((application) => application.id === createdAppId) || null
+      : null;
     try {
-      const result = await createApplication(userId, {
-        jobTitle: activeJobTitle,
-        companyName: activeCompanyName,
-        recipientEmail: activeRecipientEmail,
-        requirements: activeRequirements,
-        description: activeDescription,
-      });
-      createdApp = result.application;
-      createdAppId = result.id;
-      setAtsApplicationId(createdAppId);
-
-      if (createdApp?.status === 'Draft') {
-        await updateApplicationStatus(userId, createdAppId, 'Generating');
+      if (!createdAppId) {
+        const result = await createApplication(userId, {
+          jobTitle: activeJobTitle,
+          companyName: activeCompanyName,
+          recipientEmail: activeRecipientEmail,
+          requirements: activeRequirements,
+          description: activeDescription,
+        });
+        createdApp = result.application;
+        createdAppId = result.id;
+        setAtsApplicationId(createdAppId);
       }
+
+      await updateApplicationStatus(userId, createdAppId, 'Generating');
 
       // Instantly refresh applications state so it appears in history right away
       const refreshedList = await getApplications(userId);
       setApplications(refreshedList);
+      createdApp = refreshedList.find((application) => application.id === createdAppId) || createdApp;
     } catch (saveErr) {
       console.warn('Initial application save warning:', saveErr.message);
     }
@@ -2156,7 +2188,7 @@ export default function AppWeb() {
                     onPress={() => handleParseAndPopulate(true)}
                     disabled={isParsingRawPost || isGenerating}
                   >
-                    <Text style={styles.aiWebhookBtnText}>Auto-fill and analyze</Text>
+                    <Text style={styles.aiWebhookBtnText}>Auto-fill & generate</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -2379,7 +2411,7 @@ export default function AppWeb() {
 
                 <TouchableOpacity
                   style={[styles.webPrimaryButton, (isGenerating || isAnalyzingAts) && styles.disabledButton]}
-                  onPress={isGenerating ? () => setShowCountdownPopup(true) : () => handleAnalyzeResumeMatch()}
+                  onPress={isGenerating ? () => setShowCountdownPopup(true) : () => handleGenerationRequest()}
                   disabled={isAnalyzingAts}
                 >
                   {isGenerating ? (
@@ -2392,10 +2424,10 @@ export default function AppWeb() {
                   ) : isAnalyzingAts ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <ActivityIndicator color="#ffffff" style={{ marginRight: 10 }} />
-                      <Text style={styles.webPrimaryButtonText}>Analyzing resume match...</Text>
+                      <Text style={styles.webPrimaryButtonText}>Agent is analyzing before generation...</Text>
                     </View>
                   ) : (
-                    <Text style={styles.webPrimaryButtonText}>{atsReport ? 'Refresh ATS analysis' : 'Analyze resume match'}</Text>
+                    <Text style={styles.webPrimaryButtonText}>Generate application</Text>
                   )}
                 </TouchableOpacity>
 
@@ -2410,21 +2442,6 @@ export default function AppWeb() {
               </View>
             </View>
 
-            {atsReport ? (
-              <AtsDashboard
-                report={atsReport}
-                previousScore={atsReport.stage === 'after' ? atsBaselineReport?.score ?? null : null}
-                isOptimizing={isTailoringResume || isAnalyzingAts}
-                isGenerating={isGenerating}
-                onEditResume={() => {
-                  setResumeEditText(settings.resumeContent || '');
-                  setResumeViewMode('edit');
-                  setActiveTab('resume');
-                }}
-                onOptimizeResume={handleAgentOptimizeResume}
-                onGenerateEmail={() => handleGenerateAndApply()}
-              />
-            ) : null}
           </View>
         )}
 
@@ -3837,6 +3854,48 @@ export default function AppWeb() {
           </View>
         </Modal>
       )}
+      {/* Pre-generation ATS analytics popup */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={showAtsAnalysisModal}
+        onRequestClose={() => setShowAtsAnalysisModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxWidth: 980, maxHeight: '92%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={styles.modalTitle}>Agent analysis before generation</Text>
+                <Text style={styles.modalSub}>
+                  Review the complete resume-to-job analytics, then continue to generate the application email.
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setShowAtsAnalysisModal(false)}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }}>
+              <AtsDashboard
+                compact
+                report={atsReport}
+                previousScore={atsReport?.stage === 'after' ? atsBaselineReport?.score ?? null : null}
+                isOptimizing={isTailoringResume || isAnalyzingAts}
+                isGenerating={isGenerating}
+                onEditResume={() => {
+                  setShowAtsAnalysisModal(false);
+                  setResumeEditText(settings.resumeContent || '');
+                  setResumeViewMode('edit');
+                  setActiveTab('resume');
+                }}
+                onOptimizeResume={handleAgentOptimizeResume}
+                onGenerateEmail={continueAfterAnalysis}
+              />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Active Generation Countdown Popup Modal */}
       {showCountdownPopup && (
         <Modal
@@ -3856,7 +3915,7 @@ export default function AppWeb() {
               </Text>
 
               <Text style={styles.countdownModalSubtitle}>
-                Our AI workflow is analyzing your resume and crafting a tailored pitch for{' '}
+                ATS analysis is complete. Our AI workflow is now crafting a tailored pitch for{' '}
                 <Text style={{ fontWeight: '700', color: '#17201c' }}>
                   {companyName || jobTitle || 'this role'}
                 </Text>.
