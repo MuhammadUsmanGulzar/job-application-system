@@ -312,39 +312,191 @@ export async function uploadTailoredResumeToBucket(userId, tailoredResumeText, d
   }
 }
 
-export async function uploadResumeFile(userId, fileBlobOrBytes, fileName) {
+function normalizeResumeFileName(fileName = '') {
+  const safeName = String(fileName)
+    .replace(/[\\/]+/g, '-')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim();
+  return safeName || `Resume_${Date.now()}.pdf`;
+}
+
+export async function listUserResumes(userId) {
+  if (!userId) return [];
+
+  const rows = [];
+  const rowPageSize = 1000;
+  for (let offset = 0; ; offset += rowPageSize) {
+    const { data: page, error: rowsError } = await supabase
+      .from('resumes')
+      .select('id, user_id, file_name, file_path, file_size, mime_type, parsed_text, is_primary, created_at, updated_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + rowPageSize - 1);
+
+    if (rowsError) throw rowsError;
+    rows.push(...(page || []));
+    if (!page || page.length < rowPageSize) break;
+  }
+
+  const byPath = new Map();
+  for (const row of rows || []) {
+    if (!row.file_path || !row.file_path.startsWith(`${userId}/`)) continue;
+    const existing = byPath.get(row.file_path);
+    if (!existing) {
+      byPath.set(row.file_path, row);
+    } else {
+      byPath.set(row.file_path, {
+        ...existing,
+        is_primary: Boolean(existing.is_primary || row.is_primary),
+        parsed_text: existing.parsed_text || row.parsed_text || '',
+      });
+    }
+  }
+
+  // Include files that exist in the user's private bucket but pre-date the DB record.
+  const files = [];
+  const filePageSize = 100;
+  for (let offset = 0; ; offset += filePageSize) {
+    const { data: page, error: filesError } = await supabase.storage
+      .from('resumes')
+      .list(userId, { limit: filePageSize, offset, sortBy: { column: 'updated_at', order: 'desc' } });
+
+    if (filesError) throw filesError;
+    files.push(...(page || []));
+    if (!page || page.length < filePageSize) break;
+  }
+
+  for (const file of files || []) {
+    if (!file.name || file.name.endsWith('/')) continue;
+    const filePath = `${userId}/${file.name}`;
+    if (!byPath.has(filePath)) {
+      byPath.set(filePath, {
+        id: `storage:${filePath}`,
+        user_id: userId,
+        file_name: file.name,
+        file_path: filePath,
+        file_size: file.metadata?.size || null,
+        mime_type: file.metadata?.mimetype || file.metadata?.contentType || '',
+        parsed_text: '',
+        is_primary: false,
+        created_at: file.created_at || null,
+        updated_at: file.updated_at || file.created_at || null,
+      });
+    }
+  }
+
+  return Array.from(byPath.values()).sort((a, b) => {
+    if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
+    return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
+  });
+}
+
+export async function uploadResumeFile(userId, fileBlobOrBytes, fileName, metadata = {}) {
   if (!userId) throw new Error('User must be logged in to upload to Supabase storage.');
 
-  const filePath = `${userId}/${fileName}`;
+  const safeFileName = normalizeResumeFileName(fileName);
+  const filePath = `${userId}/${safeFileName}`;
+  const contentType = metadata.mimeType || fileBlobOrBytes?.type || 'application/octet-stream';
 
   try {
     const { data, error } = await supabase.storage
       .from('resumes')
       .upload(filePath, fileBlobOrBytes, {
         upsert: true,
-        contentType: 'application/octet-stream',
+        contentType,
       });
 
     if (error) throw error;
 
-    // Record into public.resumes table
-    await supabase.from('resumes').insert({
+    // Keep one metadata row per bucket path and make the latest upload primary.
+    await supabase.from('resumes').update({ is_primary: false }).eq('user_id', userId);
+    await supabase.from('resumes').delete().eq('user_id', userId).eq('file_path', filePath);
+    const { error: insertError } = await supabase.from('resumes').insert({
       user_id: userId,
-      file_name: fileName,
+      file_name: safeFileName,
       file_path: filePath,
+      file_size: metadata.size || fileBlobOrBytes?.size || null,
+      mime_type: contentType,
+      parsed_text: metadata.parsedText || null,
       is_primary: true,
     });
+    if (insertError) throw insertError;
 
     // Automatically trigger Python Agent to extract text and sync user_settings
     try {
       await syncResumeFromBucket(userId);
     } catch (_syncErr) {}
 
-    return { success: true, filePath, data };
+    return { success: true, fileName: safeFileName, filePath, data };
   } catch (err) {
     console.error('Resume bucket upload error:', err);
     throw err;
   }
+}
+
+export async function setPrimaryResume(userId, resume) {
+  if (!userId || !resume?.file_path || !resume.file_path.startsWith(`${userId}/`)) {
+    throw new Error('A valid resume owned by the signed-in user is required.');
+  }
+
+  let resumeContent = resume.parsed_text || '';
+  if (!resumeContent && /\.(txt|md)$/i.test(resume.file_name || '')) {
+    const { data: blob, error: downloadError } = await supabase.storage.from('resumes').download(resume.file_path);
+    if (downloadError) throw downloadError;
+    resumeContent = await blob.text();
+  }
+
+  const { error: clearError } = await supabase.from('resumes').update({ is_primary: false }).eq('user_id', userId);
+  if (clearError) throw clearError;
+
+  if (!String(resume.id || '').startsWith('storage:')) {
+    const { error: primaryError } = await supabase
+      .from('resumes')
+      .update({ is_primary: true })
+      .eq('user_id', userId)
+      .eq('file_path', resume.file_path);
+    if (primaryError) throw primaryError;
+  } else {
+    const { error: insertError } = await supabase.from('resumes').insert({
+      user_id: userId,
+      file_name: resume.file_name,
+      file_path: resume.file_path,
+      file_size: resume.file_size || null,
+      mime_type: resume.mime_type || null,
+      parsed_text: resumeContent || null,
+      is_primary: true,
+    });
+    if (insertError) throw insertError;
+  }
+
+  const currentSettings = await getSettings(userId);
+  const updatedSettings = {
+    ...currentSettings,
+    resumeName: resume.file_name,
+    resumeContent,
+  };
+  await saveSettings(userId, updatedSettings);
+
+  const fileInfo = await getResumeFileUrl(userId, resume.file_name).catch(() => null);
+  return { settings: updatedSettings, resumeUrl: fileInfo?.url || '' };
+}
+
+export async function deleteUserResume(userId, resume) {
+  if (!userId || !resume?.file_path || !resume.file_path.startsWith(`${userId}/`) || resume.file_path.includes('..')) {
+    throw new Error('A valid resume owned by the signed-in user is required.');
+  }
+
+  const { error: storageError } = await supabase.storage.from('resumes').remove([resume.file_path]);
+  if (storageError) throw storageError;
+
+  const { error: deleteError } = await supabase
+    .from('resumes')
+    .delete()
+    .eq('user_id', userId)
+    .eq('file_path', resume.file_path);
+  if (deleteError) throw deleteError;
+
+  return true;
 }
 
 // Synchronize and load resume directly from Supabase Storage bucket 'resumes/{userId}/'

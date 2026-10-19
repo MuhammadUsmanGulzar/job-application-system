@@ -34,7 +34,10 @@ import {
   updateResumeContent,
   tailorResumeForJob,
   syncResumeFromBucket,
-  getResumeFileUrl
+  getResumeFileUrl,
+  listUserResumes,
+  setPrimaryResume,
+  deleteUserResume
 } from './services/storage';
 import { LLM_PROVIDERS_CONFIG, performLlmJobParse, performLlmEmailGeneration } from './services/ai';
 import { sendEmail } from './services/email';
@@ -327,6 +330,9 @@ export default function AppWeb() {
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [isSavingResumeText, setIsSavingResumeText] = useState(false);
   const [isSyncingBucket, setIsSyncingBucket] = useState(false);
+  const [resumeLibrary, setResumeLibrary] = useState([]);
+  const [isLoadingResumeLibrary, setIsLoadingResumeLibrary] = useState(false);
+  const [deletingResumePath, setDeletingResumePath] = useState('');
 
   // Application-Specific Picked Resume State
   const [pickedResumeSource, setPickedResumeSource] = useState('master'); // 'master' | 'tailored'
@@ -388,6 +394,31 @@ export default function AppWeb() {
       handleSyncResumeFromBucket();
     }
   }, [activeTab, session?.user?.id]);
+
+  const loadResumeLibrary = React.useCallback(async (userId = session?.user?.id) => {
+    if (!userId) {
+      setResumeLibrary([]);
+      return [];
+    }
+
+    setIsLoadingResumeLibrary(true);
+    try {
+      const resumes = await listUserResumes(userId);
+      setResumeLibrary(resumes);
+      return resumes;
+    } catch (error) {
+      showError(`Could not load your resumes: ${error.message}`, 'Resume Library');
+      return [];
+    } finally {
+      setIsLoadingResumeLibrary(false);
+    }
+  }, [session?.user?.id, showError]);
+
+  useEffect(() => {
+    if (activeTab === 'resume' && session?.user?.id) {
+      Promise.resolve().then(() => loadResumeLibrary(session.user.id));
+    }
+  }, [activeTab, session?.user?.id, loadResumeLibrary]);
 
   const clearApplicationForm = () => {
     setJobTitle('');
@@ -815,16 +846,25 @@ export default function AppWeb() {
             const updated = {
               ...settings,
               resumeName: file.name,
-              resumeContent: typeof content === 'string' ? content : `[Uploaded file: ${file.name}]`,
+              resumeContent: typeof content === 'string' ? content : '',
             };
             setSettings(updated);
 
             // Upload directly to user's isolated folder in Supabase Storage bucket
             if (session?.user?.id) {
               try {
-                await uploadResumeFile(session.user.id, file, file.name);
-                await saveSettings(session.user.id, updated);
-                setResumeFeedback(`Uploaded to cloud bucket: ${file.name}`);
+                const upload = await uploadResumeFile(session.user.id, file, file.name, {
+                  mimeType: file.type,
+                  size: file.size,
+                  parsedText: /\.(txt|md)$/i.test(file.name) && typeof content === 'string' ? content : '',
+                });
+                const savedSettings = { ...updated, resumeName: upload.fileName };
+                setSettings(savedSettings);
+                await saveSettings(session.user.id, savedSettings);
+                setResumePdfUrl('');
+                await loadResumeLibrary(session.user.id);
+                await loadResumePdfUrl(upload.fileName);
+                setResumeFeedback(`Uploaded to cloud bucket: ${upload.fileName}`);
               } catch (storageErr) {
                 console.log('Bucket upload note:', storageErr.message);
                 await saveSettings(session.user.id, updated);
@@ -835,11 +875,67 @@ export default function AppWeb() {
             }
             setTimeout(() => setResumeFeedback(''), 3000);
           };
-          reader.readAsText(file);
+          if (/\.(txt|md)$/i.test(file.name)) reader.readAsText(file);
+          else reader.readAsArrayBuffer(file);
         }
       };
       input.click();
     }
+  };
+
+  const handleUseResume = async (resume) => {
+    if (!session?.user?.id) return;
+    try {
+      const selected = await setPrimaryResume(session.user.id, resume);
+      setSettings(selected.settings);
+      setResumeEditText(selected.settings.resumeContent || '');
+      setResumePdfUrl(selected.resumeUrl || '');
+      setResumeViewMode(selected.resumeUrl ? 'pdf' : 'preview');
+      await loadResumeLibrary(session.user.id);
+      showSuccess(`“${resume.file_name}” is now your active resume.`, 'Resume Selected');
+    } catch (error) {
+      showError(`Could not select this resume: ${error.message}`, 'Selection Failed');
+    }
+  };
+
+  const handleDeleteResume = (resume) => {
+    if (!session?.user?.id) return;
+    showConfirm({
+      title: 'Delete resume?',
+      message: `“${resume.file_name}” will be permanently removed from your private resume library.`,
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        setDeletingResumePath(resume.file_path);
+        try {
+          await deleteUserResume(session.user.id, resume);
+          const remaining = await loadResumeLibrary(session.user.id);
+          const wasActive = settings.resumeName === resume.file_name || resume.is_primary;
+
+          if (wasActive) {
+            if (remaining.length > 0) {
+              const selected = await setPrimaryResume(session.user.id, remaining[0]);
+              setSettings(selected.settings);
+              setResumeEditText(selected.settings.resumeContent || '');
+              setResumePdfUrl(selected.resumeUrl || '');
+              await loadResumeLibrary(session.user.id);
+            } else {
+              const emptySettings = { ...settings, resumeName: '', resumeContent: '' };
+              await saveSettings(session.user.id, emptySettings);
+              setSettings(emptySettings);
+              setResumeEditText('');
+              setResumePdfUrl('');
+              setResumeViewMode('preview');
+            }
+          }
+
+          showSuccess(`“${resume.file_name}” was deleted.`, 'Resume Deleted');
+        } catch (error) {
+          showError(`Could not delete this resume: ${error.message}`, 'Delete Failed');
+        } finally {
+          setDeletingResumePath('');
+        }
+      },
+    });
   };
 
   const handleAnalyzeResumeMatch = async (overrideFields = null, options = {}) => {
@@ -3050,6 +3146,96 @@ export default function AppWeb() {
                     <Text style={styles.resumeActionButtonTextSecondary}>Upload new</Text>
                   </TouchableOpacity>
                 </View>
+              </View>
+
+              {/* User-owned resume library */}
+              <View style={{ backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, padding: isMobile ? 12 : 16, marginBottom: 20 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>My resumes</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                      {resumeLibrary.length} {resumeLibrary.length === 1 ? 'resume' : 'resumes'} in your private library
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.resumeActionButton, { backgroundColor: '#2563eb' }]}
+                    onPress={handleUploadResumeWeb}
+                  >
+                    <Text style={styles.resumeActionButtonTextPrimary}>+ Add resume</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isLoadingResumeLibrary ? (
+                  <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#2563eb" />
+                  </View>
+                ) : resumeLibrary.length === 0 ? (
+                  <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>
+                      No resumes yet. Add your first PDF, Word document, or text resume.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={{ gap: 8 }}>
+                    {resumeLibrary.map((resume) => {
+                      const isActiveResume = resume.is_primary || settings.resumeName === resume.file_name;
+                      const updatedAt = resume.updated_at || resume.created_at;
+                      return (
+                        <View
+                          key={resume.file_path}
+                          style={{
+                            flexDirection: isMobile ? 'column' : 'row',
+                            alignItems: isMobile ? 'stretch' : 'center',
+                            gap: 10,
+                            padding: 12,
+                            backgroundColor: '#ffffff',
+                            borderWidth: 1,
+                            borderColor: isActiveResume ? '#93c5fd' : '#e2e8f0',
+                            borderRadius: 10,
+                          }}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '700', color: '#0f172a', maxWidth: isMobile ? 230 : 520 }}>
+                                {resume.file_name}
+                              </Text>
+                              {isActiveResume ? (
+                                <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#1d4ed8' }}>ACTIVE</Text>
+                                </View>
+                              ) : null}
+                            </View>
+                            <Text style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                              {resume.file_size ? `${Math.max(1, Math.round(resume.file_size / 1024))} KB` : 'Cloud file'}
+                              {updatedAt ? ` • ${new Date(updatedAt).toLocaleDateString()}` : ''}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            {!isActiveResume ? (
+                              <TouchableOpacity
+                                style={[styles.resumeActionButton, { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' }]}
+                                onPress={() => handleUseResume(resume)}
+                              >
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1d4ed8' }}>Use resume</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                            <TouchableOpacity
+                              style={[styles.resumeActionButton, { backgroundColor: '#fff1f2', borderWidth: 1, borderColor: '#fecdd3' }]}
+                              onPress={() => handleDeleteResume(resume)}
+                              disabled={deletingResumePath === resume.file_path}
+                            >
+                              {deletingResumePath === resume.file_path ? (
+                                <ActivityIndicator size="small" color="#be123c" />
+                              ) : (
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#be123c' }}>Delete</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
 
               {/* AI Tailoring Result Insights Banner */}
