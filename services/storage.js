@@ -731,6 +731,60 @@ export async function updateResumeContent(userId, resumeContent, resumeName = ''
   return updatedSettings;
 }
 
+function fileNamePart(value, fallback) {
+  const normalized = String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+  return normalized || fallback;
+}
+
+function resumeRoleVariants(jobTitle = '') {
+  const original = fileNamePart(jobTitle, 'Professional');
+  const readable = original.replace(/_/g, ' ');
+  const variants = [original];
+
+  if (/\b(?:AI|Artificial Intelligence|Agentic AI)\b/i.test(readable)) {
+    variants.push('AI_Engineer', 'Agentic_AI_Developer', 'AI_Developer', 'AI_Specialist');
+  }
+
+  if (/\bEngineer\b/i.test(readable)) {
+    variants.push(fileNamePart(readable.replace(/\bEngineer\b/i, 'Developer'), 'Developer'));
+  }
+  if (/\bDeveloper\b/i.test(readable)) {
+    variants.push(fileNamePart(readable.replace(/\bDeveloper\b/i, 'Engineer'), 'Engineer'));
+  }
+
+  variants.push(`${original}_Specialist`, `${original}_Professional`);
+  return [...new Set(variants.map((variant) => fileNamePart(variant, 'Professional')))];
+}
+
+async function createTailoredResumeFileName(userId, fullName, jobTitle, rawResume = '') {
+  const resumeFirstLine = String(rawResume || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+  const candidateName = fileNamePart(fullName || resumeFirstLine, 'Candidate');
+  const roleVariants = resumeRoleVariants(jobTitle);
+  let existingNames = new Set();
+
+  if (userId) {
+    try {
+      const resumes = await listUserResumes(userId);
+      existingNames = new Set(resumes.map((resume) => String(resume.file_name || '').toLowerCase()));
+    } catch (_e) {}
+  }
+
+  for (const role of roleVariants) {
+    const fileName = `${candidateName}_${role}.pdf`;
+    if (!existingNames.has(fileName.toLowerCase())) return fileName;
+  }
+
+  // Preserve the role meaning if every natural title variant is already used.
+  let version = 2;
+  while (existingNames.has(`${candidateName}_${roleVariants[0]}_${version}.pdf`.toLowerCase())) version += 1;
+  return `${candidateName}_${roleVariants[0]}_${version}.pdf`;
+}
+
 export async function tailorResumeForJob({
   userId,
   jobTitle = 'Software Engineer',
@@ -745,11 +799,12 @@ export async function tailorResumeForJob({
   llmModel = '',
   profile = {},
 }) {
-  const cleanTitle = (jobTitle || 'Role').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
-  const cleanComp = (companyName || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 15);
-  const ts = Date.now().toString().slice(-4);
-  const compPart = cleanComp ? `_${cleanComp}` : '';
-  const newFileName = `Resume_Tailored_${cleanTitle}${compPart}_${ts}.pdf`;
+  const newFileName = await createTailoredResumeFileName(
+    userId,
+    profile.fullName,
+    jobTitle,
+    rawResume
+  );
 
   // 1. Direct LLM resume optimization if API key is provided
   if (llmApiKey && llmApiKey.trim().length > 5) {
@@ -771,12 +826,12 @@ export async function tailorResumeForJob({
         let bucketInfo = null;
         if (userId) {
           try {
-            bucketInfo = await uploadTailoredResumeToBucket(userId, result.tailoredResume, result.resumeName || newFileName, profile);
+            bucketInfo = await uploadTailoredResumeToBucket(userId, result.tailoredResume, newFileName, profile);
           } catch (_e) {}
         }
         return {
           ...result,
-          resumeName: bucketInfo?.fileName || result.resumeName || newFileName,
+          resumeName: bucketInfo?.fileName || newFileName,
           bucketSaved: Boolean(bucketInfo?.filePath),
           filePath: bucketInfo?.filePath || '',
           signedUrl: bucketInfo?.signedUrl || '',
@@ -821,7 +876,7 @@ export async function tailorResumeForJob({
         let bucketInfo = null;
         if (userId && !result.pdf_file_path) {
           try {
-            bucketInfo = await uploadTailoredResumeToBucket(userId, result.tailored_resume, result.resume_name || newFileName, profile);
+            bucketInfo = await uploadTailoredResumeToBucket(userId, result.tailored_resume, newFileName, profile);
           } catch (_e) {}
         }
         return {

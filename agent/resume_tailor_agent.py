@@ -21,6 +21,72 @@ def get_supabase_client() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
+def _filename_part(value: str, fallback: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", normalized).strip("_")
+    normalized = re.sub(r"_+", "_", normalized)
+    return normalized or fallback
+
+
+def _role_filename_variants(job_title: str) -> List[str]:
+    original = _filename_part(job_title, "Professional")
+    readable = original.replace("_", " ")
+    variants = [original]
+
+    if re.search(r"\b(?:AI|Artificial Intelligence|Agentic AI)\b", readable, re.I):
+        variants.extend(["AI_Engineer", "Agentic_AI_Developer", "AI_Developer", "AI_Specialist"])
+    if re.search(r"\bEngineer\b", readable, re.I):
+        variants.append(_filename_part(re.sub(r"\bEngineer\b", "Developer", readable, count=1, flags=re.I), "Developer"))
+    if re.search(r"\bDeveloper\b", readable, re.I):
+        variants.append(_filename_part(re.sub(r"\bDeveloper\b", "Engineer", readable, count=1, flags=re.I), "Engineer"))
+
+    variants.extend([f"{original}_Specialist", f"{original}_Professional"])
+    return list(dict.fromkeys(_filename_part(value, "Professional") for value in variants))
+
+
+def _tailored_resume_filename(
+    supabase: Client,
+    user_id: str,
+    full_name: str,
+    job_title: str,
+    raw_resume: str = "",
+) -> str:
+    first_line = next((line.strip() for line in (raw_resume or "").splitlines() if line.strip()), "")
+    candidate_name = _filename_part(full_name or first_line, "Candidate")
+    role_variants = _role_filename_variants(job_title)
+    existing_names = set()
+
+    try:
+        result = supabase.from_("resumes").select("file_name").eq("user_id", user_id).execute()
+        existing_names.update(
+            str(row.get("file_name") or "").lower()
+            for row in (result.data or [])
+            if row.get("file_name")
+        )
+    except Exception:
+        pass
+
+    try:
+        existing_names.update(
+            str(item.get("name") or "").lower()
+            for item in (supabase.storage.from_("resumes").list(user_id) or [])
+            if item.get("name")
+        )
+    except Exception:
+        pass
+
+    for role in role_variants:
+        file_name = f"{candidate_name}_{role}.pdf"
+        if file_name.lower() not in existing_names:
+            return file_name
+
+    version = 2
+    while f"{candidate_name}_{role_variants[0]}_{version}.pdf".lower() in existing_names:
+        version += 1
+    return f"{candidate_name}_{role_variants[0]}_{version}.pdf"
+
+
 # -----------------------------------------------------------------------------
 # STATE DEFINITION
 # -----------------------------------------------------------------------------
@@ -785,21 +851,28 @@ def persist_resume_node(state: ResumeTailorState) -> ResumeTailorState:
 
     try:
         supabase = get_supabase_client()
-        clean_title = re.sub(r"[^A-Za-z0-9_-]", "_", job_title)[:25]
-        file_name = f"Resume_Tailored_{clean_title}.pdf"
+        file_name = _tailored_resume_filename(
+            supabase,
+            user_id,
+            state.get("full_name", ""),
+            job_title,
+            state.get("raw_resume", ""),
+        )
 
         logs.append(f"Persisting tailored resume '{file_name}' to Supabase for user {user_id}...")
 
         # Keep the uploaded master resume untouched; record this as a job-specific version.
-        supabase.from_("resumes").upsert({
-            "user_id": user_id,
-            "file_name": file_name,
-            "file_path": f"{user_id}/{file_name}",
-            "parsed_text": tailored,
-            "is_primary": False,
-        }, on_conflict="user_id,file_path").execute()
-
-        logs.append("Recorded tailored resume as a non-primary job-specific version.")
+        try:
+            supabase.from_("resumes").insert({
+                "user_id": user_id,
+                "file_name": file_name,
+                "file_path": f"{user_id}/{file_name}",
+                "parsed_text": tailored,
+                "is_primary": False,
+            }).execute()
+            logs.append("Recorded tailored resume as a non-primary job-specific version.")
+        except Exception as metadata_err:
+            logs.append(f"Resume metadata insert notice: {metadata_err}")
 
         # Upload to Supabase Storage bucket 'resumes/{user_id}/{file_name}' as PDF
         try:
