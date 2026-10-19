@@ -830,7 +830,7 @@ export default function App() {
         try {
           await deleteUserResume(session.user.id, resume);
           const remaining = await loadResumeLibrary(session.user.id);
-          const wasActive = settings.resumeName === resume.file_name || resume.is_primary;
+          const wasActive = settings.resumeName === resume.file_name;
 
           if (wasActive) {
             if (remaining.length > 0) {
@@ -2840,7 +2840,7 @@ export default function App() {
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>My resumes</Text>
                     <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                      {resumeLibrary.length} {resumeLibrary.length === 1 ? 'resume' : 'resumes'} in your private library
+                      Showing all {resumeLibrary.length} {resumeLibrary.length === 1 ? 'resume' : 'resumes'}. Select View to open one.
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -2862,7 +2862,7 @@ export default function App() {
                 ) : (
                   <View style={{ gap: 8 }}>
                     {resumeLibrary.map((resume) => {
-                      const isActiveResume = resume.is_primary || settings.resumeName === resume.file_name;
+                      const isActiveResume = settings.resumeName === resume.file_name;
                       const updatedAt = resume.updated_at || resume.created_at;
                       return (
                         <View
@@ -2889,7 +2889,7 @@ export default function App() {
                                 style={[styles.resumeActionButton, { flex: 1, backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' }]}
                                 onPress={() => handleUseResume(resume)}
                               >
-                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#1d4ed8' }}>Use resume</Text>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#1d4ed8' }}>View</Text>
                               </TouchableOpacity>
                             ) : null}
                             <TouchableOpacity
